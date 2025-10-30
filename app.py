@@ -3,7 +3,7 @@ Image Roundness Analyzer - Flask Web Application v2
 FULLY OPTIMIZED: Parallel downloads + batch inference for 40-50% speedup
 
 Changes from fixed version:
-- Parallel image downloads with ThreadPoolExecutor (3-5s â†’ 1-2s per batch)
+- Parallel image downloads with ThreadPoolExecutor (3-5s → 1-2s per batch)
 - Batch inference for OWL-ViT detection (processes 4 images at once)
 - Smart batching in both search and batch processing
 - Memory leak fixes maintained
@@ -137,7 +137,7 @@ def search_all_sources(search_term: str, num_images: int = 30):
     
     all_images = []
     
-    print(f"ðŸ” Searching across multiple sources for: '{search_term}'")
+    print(f"🔍 Searching across multiple sources for: '{search_term}'")
     
     # Pexels
     pexels_results = pexels_searcher.search_images(search_term, num_images=per_source + (1 if remainder > 0 else 0))
@@ -151,7 +151,7 @@ def search_all_sources(search_term: str, num_images: int = 30):
     pixabay_results = pixabay_searcher.search_images(search_term, num_images=per_source)
     all_images.extend(pixabay_results)
     
-    print(f"âœ“ Retrieved {len(all_images)} total images")
+    print(f"✓ Retrieved {len(all_images)} total images")
     
     return all_images
 
@@ -194,7 +194,7 @@ def download_images_parallel(image_results, max_workers=MAX_DOWNLOAD_WORKERS):
                 if image_bytes:
                     downloads.append((img_data, image_bytes))
             except Exception as e:
-                print(f"    âœ— Download failed for {img_data['id']}: {e}")
+                print(f"    ✗ Download failed for {img_data['id']}: {e}")
     
     return downloads
 
@@ -209,16 +209,16 @@ def init_app():
     if PEXELS_API_KEY and PEXELS_API_KEY != "YOUR_PEXELS_API_KEY_HERE":
         pexels_searcher = PexelsSearcher(PEXELS_API_KEY)
     else:
-        print("âš ï¸  WARNING: Pexels API key not set!")
+        print("⚠️  WARNING: Pexels API key not set!")
     
     database = Database()
     
-    print("\nðŸ¤– Loading AI models at startup...")
+    print("\n🤖 Loading AI models at startup...")
     use_local = os.path.exists("./models/owlvit-base-patch32")
     analyzer = RoundnessAnalyzer(use_local_models=use_local)
-    print("âœ“ Models loaded and ready\n")
+    print("✓ Models loaded and ready\n")
     
-    print("âœ“ Application initialized with parallel processing")
+    print("✓ Application initialized with parallel processing")
 
 
 @app.route('/')
@@ -251,7 +251,7 @@ def search():
         num_to_fetch = num_images_requested * 2
         num_to_process = int(num_images_requested * 1.25)
         
-        print(f"ðŸ“¥ Fetching {num_to_fetch} images")
+        print(f"📥 Fetching {num_to_fetch} images")
         
         # Search for images
         image_results = search_all_sources(search_term, num_images=num_to_fetch)
@@ -262,21 +262,21 @@ def search():
         
         image_results = image_results[:num_to_process]
         
-        print(f"âš¡ Downloading {len(image_results)} images in parallel...")
+        print(f"⚡ Downloading {len(image_results)} images in parallel...")
         
         # OPTIMIZED: Parallel downloads
         start_time = time.time()
         downloads = download_images_parallel(image_results)
         download_time = time.time() - start_time
         
-        print(f"âœ“ Downloaded {len(downloads)} images in {download_time:.1f}s")
+        print(f"✓ Downloaded {len(downloads)} images in {download_time:.1f}s")
         
         if not downloads:
             return render_template('index.html',
                                  error=f"Could not download images for '{search_term}'.")
         
         # OPTIMIZED: Batch processing
-        print(f"âš¡ Analyzing images in batches of {BATCH_SIZE}...")
+        print(f"⚡ Analyzing images in batches of {BATCH_SIZE}...")
         results = []
         
         # Process in batches
@@ -433,7 +433,7 @@ def search():
             stats
         )
         
-        print(f"\nâœ“ Analysis complete!")
+        print(f"\n✓ Analysis complete!")
         print(f"  Valid results: {len(filtered_results)}")
         print(f"  Average composite: {stats['composite']['mean']:.1f}%")
         
@@ -532,7 +532,7 @@ def export_search_csv(search_id):
     writer.writerow([
         'Rank', 'Image ID', 'Photographer', 'Source', 'Roundness Score (1-50)',
         'Score Description', 'Composite (%)', 'Circularity (%)', 'Aspect Ratio (%)',
-        'Eccentricity (%)', 'Solidity (%)', 'Convexity (%)', 'Area (pxÂ²)', 'Perimeter (px)'
+        'Eccentricity (%)', 'Solidity (%)', 'Convexity (%)', 'Area (px²)', 'Perimeter (px)'
     ])
     
     for result in search_data['filtered_results']:
@@ -950,7 +950,7 @@ def batch_start(batch_id):
                     image_results = search_all_sources(keyword, num_images=images_per * 2)
                     
                     if not image_results:
-                        print(f"   âš ï¸ No images found")
+                        print(f"   ⚠️ No images found")
                         completed += 1
                         database.update_batch_status(batch_id, 'processing', idx + 1, completed)
                         continue
@@ -958,7 +958,7 @@ def batch_start(batch_id):
                     image_results = image_results[:int(images_per * 1.25)]
                     
                     # OPTIMIZED: Parallel downloads
-                    print(f"   âš¡ Downloading {len(image_results)} images in parallel...")
+                    print(f"   ⚡ Downloading {len(image_results)} images in parallel...")
                     downloads = download_images_parallel(image_results)
                     
                     if not downloads:
@@ -1052,7 +1052,7 @@ def batch_start(batch_id):
                             batch_id=batch_id
                         )
                         
-                        print(f"   âœ“ Saved {len(results)} results")
+                        print(f"   ✓ Saved {len(results)} results")
                     
                     completed += 1
                     database.update_batch_status(batch_id, 'processing', idx + 1, completed)
@@ -1062,7 +1062,7 @@ def batch_start(batch_id):
                     time.sleep(2)
                     
                 except Exception as e:
-                    print(f"   âŒ Error: {str(e)}")
+                    print(f"   ❌ Error: {str(e)}")
                     completed += 1
                     database.update_batch_status(batch_id, 'processing', idx + 1, completed)
                     cleanup_memory()
@@ -1242,11 +1242,11 @@ if __name__ == '__main__':
     
     print("\n" + "="*80)
     print(" IMAGE ROUNDNESS ANALYZER v2.0 - FULLY OPTIMIZED")
-    print(" âš¡ Parallel downloads + batch inference = 40-50% faster")
-    print(" âœ“ Memory leak fixed")
-    print(" âœ“ Models loaded once at startup")
+    print(" ⚡ Parallel downloads + batch inference = 40-50% faster")
+    print(" ✓ Memory leak fixed")
+    print(" ✓ Models loaded once at startup")
     print("="*80)
-    print(f"\nðŸŒ Starting server at http://localhost:5000")
-    print("ðŸ“Š Press Ctrl+C to stop\n")
+    print(f"\n🌐 Starting server at http://localhost:5000")
+    print("📊 Press Ctrl+C to stop\n")
     
     app.run(debug=True, host='0.0.0.0', port=5000)
