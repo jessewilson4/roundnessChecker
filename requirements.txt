@@ -1,0 +1,16 @@
+Flask==3.0.0
+opencv-python==4.8.1.78
+numpy==1.26.2
+Pillow==10.1.0
+requests==2.31.0
+Werkzeug==3.0.1
+
+# NEW: Object Detection & Segmentation
+ultralytics==8.0.227          # YOLOv8
+torch==2.1.1                  # PyTorch (required for SAM)
+torchvision==0.16.1           # PyTorch vision utilities
+segment-anything==1.0         # Meta's SAM
+
+# Note: First run will auto-download models:
+# - YOLOv8n: ~6MB
+# - SAM ViT-B: ~375MB

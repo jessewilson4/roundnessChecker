@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Roundness Analyzer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <!-- Top Navigation -->
+        <nav class="top-nav">
+            <div class="nav-brand">Image Roundness Generator</div>
+            <div class="nav-links">
+                <a href="{{ url_for('index') }}" class="active">Home</a>
+                <a href="{{ url_for('history') }}">History</a>
+                <a href="{{ url_for('batch_processing') }}">Batch Processing</a>
+            </div>
+        </nav>
+
+        <header class="header">
+            <h1>🔍 Image Roundness Analyzer</h1>
+            <p class="subtitle">Search real images and analyze roundness using computer vision</p>
+        </header>
+
+        <main class="main-content">
+            <div class="search-box">
+                {% if error %}
+                <div class="error-message">
+                    <strong>⚠ Error:</strong> {{ error }}
+                </div>
+                {% endif %}
+
+                <form method="POST" action="{{ url_for('search') }}" class="search-form">
+                    <div class="input-group">
+                        <div class="autocomplete-wrapper">
+                            <input 
+                                type="text" 
+                                name="search_term"
+                                id="searchInput"
+                                placeholder="Enter object name (e.g., 'apple', 'ball', 'cat')" 
+                                class="search-input"
+                                autocomplete="off"
+                                autofocus
+                                required>
+                            <div id="autocompleteDropdown" class="autocomplete-dropdown"></div>
+                        </div>
+                        <select name="num_images" class="image-count-select">
+                            <option value="2">2 images</option>
+                            <option value="5">5 images</option>
+                            <option value="20">20 images</option>
+                            <option value="30" selected>30 images</option>
+                        </select>
+                        <button type="submit" class="search-button">Search</button>
+                    </div>
+                </form>
+
+                <div class="search-hints">
+                    <p><strong>Try searching for:</strong></p>
+                    <div class="hint-tags">
+                        <span class="hint-tag" onclick="setSearch('apple')">apple</span>
+                        <span class="hint-tag" onclick="setSearch('orange')">orange</span>
+                        <span class="hint-tag" onclick="setSearch('ball')">ball</span>
+                        <span class="hint-tag" onclick="setSearch('clock')">clock</span>
+                        <span class="hint-tag" onclick="setSearch('pizza')">pizza</span>
+                        <span class="hint-tag" onclick="setSearch('coin')">coin</span>
+                        <span class="hint-tag" onclick="setSearch('donut')">donut</span>
+                        <span class="hint-tag" onclick="setSearch('stop sign')">stop sign</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="info-section">
+                <h2>About This Tool</h2>
+                <div class="info-grid">
+                    <div class="info-card">
+                        <h3>🔬 Methodology</h3>
+                        <p><strong>Multi-Metric Composite Score</strong></p>
+                        <p>Our roundness analysis combines 5 geometric shape descriptors based on computer vision literature:</p>
+                        <ul>
+                            <li><strong>Circularity (30%)</strong>: 4πA/P² - primary geometric measure</li>
+                            <li><strong>Aspect Ratio (25%)</strong>: Minor/major axis from fitted ellipse</li>
+                            <li><strong>Eccentricity (20%)</strong>: Deviation from circular shape</li>
+                            <li><strong>Solidity (15%)</strong>: Detects indentations and concavities</li>
+                            <li><strong>Convexity (10%)</strong>: Boundary smoothness measure</li>
+                        </ul>
+                        <p style="font-size: 0.85rem; margin-top: 10px; color: #64748b;">
+                            Ellipse fitting removes pixel-level artifacts for accurate measurement of true geometric properties.
+                        </p>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>📊 Roundness Score (1-50)</h3>
+                        <p><strong>Why not 0-100%?</strong></p>
+                        <p>Real-world photography has inherent constraints:</p>
+                        <ul>
+                            <li><strong>Lower bound (~35%)</strong>: Even irregular objects score some points across multiple metrics</li>
+                            <li><strong>Upper bound (~98%)</strong>: Perfect circles don't exist due to camera lens distortion, viewing angles, and compression</li>
+                            <li><strong>Usable range: 35-98%</strong> = 63 points</li>
+                        </ul>
+                        <p style="font-size: 0.85rem; margin-top: 10px;">
+                            <strong>Our 1-50 scale</strong> maps this range intuitively:<br>
+                            48-50 = Nearly Perfect Circle | 41-47 = Highly Round | 31-40 = Round | 21-30 = Somewhat Round | 11-20 = Slightly Round | 1-10 = Not Round
+                        </p>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>✨ Features</h3>
+                        <ul>
+                            <li><strong>High-resolution images</strong>: Full-size from Pexels, Unsplash & Pixabay</li>
+                            <li><strong>AI-powered detection</strong>: OWL-ViT object detection + SAM segmentation</li>
+                            <li><strong>Ellipse fitting</strong>: Removes pixelation artifacts for true geometry</li>
+                            <li><strong>Statistical analysis</strong>: Outlier removal, distribution charts</li>
+                            <li><strong>5-panel pipeline view</strong>: See full analysis process</li>
+                            <li><strong>Search management</strong>: History, caching, bulk deletion</li>
+                            <li><strong>Manual curation</strong>: Remove individual results</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <!-- Evolution Timeline -->
+                <div class="evolution-section" style="margin-top: 50px;">
+                    <h2 style="text-align: center; margin-bottom: 30px;">🔬 Evolution of the Tool</h2>
+                    <div class="timeline-container">
+                        <div class="timeline-item">
+                            <div class="timeline-marker">v1.0</div>
+                            <div class="timeline-content">
+                                <h4>Basic Edge Detection</h4>
+                                <ul>
+                                    <li>Manual contour detection using Canny edge detection</li>
+                                    <li>Required careful parameter tuning per image</li>
+                                    <li>High false positive rate on complex backgrounds</li>
+                                    <li>Limited to simple, isolated objects</li>
+                                </ul>
+                            </div>
+                        </div>
+                        
+                        <div class="timeline-item">
+                            <div class="timeline-marker">v2.0</div>
+                            <div class="timeline-content">
+                                <h4>Machine Learning Integration</h4>
+                                <ul>
+                                    <li><strong>Added:</strong> OWL-ViT object detection for AI-powered object identification</li>
+                                    <li><strong>Added:</strong> SAM segmentation for precise pixel-level masks</li>
+                                    <li>Handles complex backgrounds and multiple objects automatically</li>
+                                    <li>Automated region-of-interest selection</li>
+                                </ul>
+                                <div class="timeline-removed">
+                                    <strong>❌ Removed:</strong> Manual parameter tuning — replaced by ML models that adapt to each image
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="timeline-item">
+                            <div class="timeline-marker">v2.5</div>
+                            <div class="timeline-content">
+                                <h4>Enhanced Metrics & Analysis</h4>
+                                <ul>
+                                    <li><strong>Added:</strong> 5-metric composite score (circularity, aspect ratio, eccentricity, solidity, convexity)</li>
+                                    <li><strong>Added:</strong> Ellipse fitting to remove pixel noise for geometric accuracy</li>
+                                    <li><strong>Added:</strong> Contour approximation for smoother perimeter calculations</li>
+                                    <li>Statistical outlier detection using IQR method</li>
+                                    <li>Multi-source image fetching (Pexels, Unsplash, Pixabay)</li>
+                                </ul>
+                                <div class="timeline-removed">
+                                    <strong>❌ Removed:</strong> First-order entropy — failed to correlate with visual roundness; replaced with geometric metrics that better represent shape characteristics
+                                </div>
+                                <div class="timeline-removed">
+                                    <strong>❌ Removed:</strong> Ellipse-based circularity — incorrectly fit ellipses to non-elliptical shapes (e.g., rectangles scored 99%); replaced with contour-based circularity (4πA/P²)
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="timeline-item">
+                            <div class="timeline-marker">v3.0</div>
+                            <div class="timeline-content">
+                                <h4>Professional Features & Refinements</h4>
+                                <ul>
+                                    <li><strong>Added:</strong> SQLite database for search history</li>
+                                    <li><strong>Added:</strong> Bulk operations (select & delete multiple results)</li>
+                                    <li><strong>Added:</strong> CSV export for data analysis</li>
+                                    <li><strong>Added:</strong> Sortable tables and distribution histograms</li>
+                                    <li><strong>Added:</strong> 5-panel pipeline visualization</li>
+                                    <li><strong>Added:</strong> 2x image buffer to account for detection failures</li>
+                                </ul>
+                                <div class="timeline-removed">
+                                    <strong>❌ Removed:</strong> Scatter plots and box plots — cluttered UI with minimal insight; replaced with focused histogram showing distribution patterns and bimodal detection
+                                </div>
+                                <div class="timeline-removed">
+                                    <strong>❌ Removed:</strong> Top 10 vs. Full List separation — unnecessary duplication; replaced with single unified sortable table
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <p>Powered by Pexels API | Canny Edge Detection + Sobel Gradients | Pure Computer Vision</p>
+        </footer>
+    </div>
+
+    <script>
+        function setSearch(term) {
+            document.getElementById('searchInput').value = term;
+        }
+
+        // Enhanced autocomplete with previous search results
+        const searchInput = document.getElementById('searchInput');
+        const dropdown = document.getElementById('autocompleteDropdown');
+        let debounceTimer;
+        
+        if (searchInput && dropdown) {
+            searchInput.addEventListener('input', function() {
+                clearTimeout(debounceTimer);
+                const query = this.value.trim();
+                
+                if (query.length < 2) {
+                    dropdown.style.display = 'none';
+                    return;
+                }
+                
+                debounceTimer = setTimeout(() => {
+                    fetch(`/api/autocomplete?q=${encodeURIComponent(query)}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.suggestions && data.suggestions.length > 0) {
+                                showSuggestions(data.suggestions, query);
+                            } else {
+                                showNewSearchOnly(query);
+                            }
+                        })
+                        .catch(err => {
+                            console.error('Autocomplete error:', err);
+                            showNewSearchOnly(query);
+                        });
+                }, 300);
+            });
+            
+            document.addEventListener('click', function(e) {
+                if (e.target !== searchInput && !dropdown.contains(e.target)) {
+                    dropdown.style.display = 'none';
+                }
+            });
+        }
+        
+        function showSuggestions(suggestions, query) {
+            dropdown.innerHTML = '';
+            
+            // Add "New Search" option
+            const newSearch = document.createElement('div');
+            newSearch.className = 'autocomplete-item autocomplete-new';
+            newSearch.innerHTML = `🔍 Search for "${query}"`;
+            newSearch.addEventListener('click', function() {
+                searchInput.value = query;
+                dropdown.style.display = 'none';
+                searchInput.closest('form').submit();
+            });
+            dropdown.appendChild(newSearch);
+            
+            // Add divider
+            const divider = document.createElement('div');
+            divider.className = 'autocomplete-divider';
+            dropdown.appendChild(divider);
+            
+            // Add previous searches
+            suggestions.forEach(search => {
+                const item = document.createElement('div');
+                item.className = 'autocomplete-item autocomplete-previous';
+                
+                const date = new Date(search.timestamp).toLocaleDateString();
+                item.innerHTML = `
+                    <div class="prev-search-title">📊 Previous: ${search.term}</div>
+                    <div class="prev-search-details">
+                        ${date} • ${search.num_images} objects • 
+                        Composite: ${search.avg_composite.toFixed(0)}%
+                    </div>
+                `;
+                
+                item.addEventListener('click', function() {
+                    window.location.href = `/load_search/${search.id}`;
+                });
+                
+                dropdown.appendChild(item);
+            });
+            
+            dropdown.style.display = 'block';
+        }
+        
+        function showNewSearchOnly(query) {
+            dropdown.innerHTML = '';
+            
+            const newSearch = document.createElement('div');
+            newSearch.className = 'autocomplete-item autocomplete-new';
+            newSearch.innerHTML = `🔍 Search for "${query}"`;
+            newSearch.addEventListener('click', function() {
+                searchInput.value = query;
+                dropdown.style.display = 'none';
+                searchInput.closest('form').submit();
+            });
+            dropdown.appendChild(newSearch);
+            
+            dropdown.style.display = 'block';
+        }
+        
+        // Loading indicator on form submit
+        document.querySelector('.search-form').addEventListener('submit', function() {
+            const button = this.querySelector('.search-button');
+            button.innerHTML = 'Searching & Analyzing...';
+            button.disabled = true;
+            
+            // Save image count to cookie
+            const numImages = document.querySelector('select[name="num_images"]').value;
+            setCookie('num_images', numImages, 365);
+        });
+        
+        // Cookie functions
+        function setCookie(name, value, days) {
+            const d = new Date();
+            d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+            document.cookie = name + "=" + value + ";expires=" + d.toUTCString() + ";path=/";
+        }
+        
+        function getCookie(name) {
+            const nameEQ = name + "=";
+            const ca = document.cookie.split(';');
+            for(let i = 0; i < ca.length; i++) {
+                let c = ca[i];
+                while (c.charAt(0) == ' ') c = c.substring(1, c.length);
+                if (c.indexOf(nameEQ) == 0) return c.substring(nameEQ.length, c.length);
+            }
+            return null;
+        }
+        
+        // Restore last used image count on page load
+        window.addEventListener('DOMContentLoaded', function() {
+            const savedCount = getCookie('num_images');
+            if (savedCount) {
+                const select = document.querySelector('select[name="num_images"]');
+                if (select) {
+                    select.value = savedCount;
+                }
+            }
+        });
+    </script>
+</body>
+</html>

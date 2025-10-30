@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Search History | Image Roundness Analyzer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <!-- Top Navigation -->
+        <nav class="top-nav">
+            <div class="nav-brand">Image Roundness Generator</div>
+            <div class="nav-links">
+                <a href="{{ url_for('index') }}">Home</a>
+                <a href="{{ url_for('history') }}" class="active">History</a>
+                <a href="{{ url_for('batch_processing') }}">Batch Processing</a>
+            </div>
+        </nav>
+
+        <header class="header">
+            <h1>📊 Search History</h1>
+            <p class="subtitle">View and reload previous searches</p>
+        </header>
+
+        <main class="history-content">
+            {% if history or batches %}
+            <section class="history-section">
+                <!-- Filter Controls -->
+                <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <label for="batchFilter" style="font-weight: 600;">Filter:</label>
+                        <select id="batchFilter" class="filter-dropdown" onchange="filterByBatch()">
+                            <option value="all">All Searches</option>
+                            <option value="none">Individual Searches Only</option>
+                            {% for batch in batches %}
+                            <option value="{{ batch.id }}">Batch: {{ batch.name }} ({{ batch.completed_keywords }}/{{ batch.total_keywords }})</option>
+                            {% endfor %}
+                        </select>
+                        <input type="text" id="searchFilter" placeholder="Search keywords..." class="search-input" style="min-width: 200px;" onkeyup="filterBySearch()">
+                    </div>
+                </div>
+                
+                <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <button id="selectAll" class="btn-secondary" style="margin-right: 10px;">Select All</button>
+                        <button id="deselectAll" class="btn-secondary">Deselect All</button>
+                        <a href="{{ url_for('export_history_csv') }}" class="btn-primary" style="margin-left: 10px; text-decoration: none;">
+                            📊 Export History to CSV
+                        </a>
+                        <a id="exportBatchLink" href="#" class="btn-primary" style="margin-left: 10px; text-decoration: none; display: none;">
+                            📊 Export Batch CSV
+                        </a>
+                    </div>
+                    <button id="deleteSelected" class="btn-danger" style="display: none;">
+                        Delete Selected (<span id="selectedCount">0</span>)
+                    </button>
+                </div>
+                
+                <div class="table-wrapper">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 50px;">
+                                    <input type="checkbox" id="selectAllCheckbox" style="cursor: pointer;">
+                                </th>
+                                <th>Search Term</th>
+                                <th>Date</th>
+                                <th>Objects</th>
+                                <th>Roundness Score</th>
+                                <th>Outliers</th>
+                                <th>Batch</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for search in history %}
+                            <tr class="history-row" data-batch-id="{{ search.batch_id or 'none' }}" data-search-term="{{ search.search_term|lower }}">
+                                <td onclick="event.stopPropagation();" style="text-align: center;">
+                                    <input type="checkbox" class="search-checkbox" data-search-id="{{ search.id }}" style="cursor: pointer;">
+                                </td>
+                                <td class="term-cell" onclick="window.location='{{ url_for('load_search', search_id=search.id) }}'">
+                                    <strong>{{ search.search_term }}</strong>
+                                </td>
+                                <td onclick="window.location='{{ url_for('load_search', search_id=search.id) }}'">{{ search.timestamp[:10] }}</td>
+                                <td onclick="window.location='{{ url_for('load_search', search_id=search.id) }}'">{{ search.num_images }}</td>
+                                <td onclick="window.location='{{ url_for('load_search', search_id=search.id) }}'" style="text-align: center;">
+                                    <div style="font-size: 1.5rem; font-weight: 700; color: {{ search.score_color }};">
+                                        {{ search.roundness_score }}
+                                    </div>
+                                    <div style="font-size: 0.7rem; color: #64748b; margin-top: -5px;">/50</div>
+                                    <div style="font-size: 0.75rem; color: #64748b; margin-top: 2px;">{{ search.score_description }}</div>
+                                </td>
+                                <td onclick="window.location='{{ url_for('load_search', search_id=search.id) }}'">{{ search.outliers_removed }}</td>
+                                <td onclick="window.location='{{ url_for('load_search', search_id=search.id) }}'">
+                                    {% if search.batch_name %}
+                                    <span class="status-badge status-processing" style="font-size: 0.8rem;">{{ search.batch_name }}</span>
+                                    {% else %}
+                                    <span style="color: #94a3b8;">—</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <button class="btn-load" onclick="event.stopPropagation(); window.location='{{ url_for('load_search', search_id=search.id) }}'">
+                                        Load
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+            {% else %}
+            <div class="empty-state">
+                <div class="empty-icon">🔍</div>
+                <h2>No Search History Yet</h2>
+                <p>Start by searching for an object on the home page!</p>
+                <a href="{{ url_for('index') }}" class="btn-primary">Go to Search</a>
+            </div>
+            {% endif %}
+        </main>
+
+        <footer class="footer">
+            <p>Search history is stored locally in SQLite database</p>
+        </footer>
+    </div>
+    
+    <script>
+        // Checkbox management
+        const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+        const selectAllBtn = document.getElementById('selectAll');
+        const deselectAllBtn = document.getElementById('deselectAll');
+        const deleteBtn = document.getElementById('deleteSelected');
+        const selectedCountSpan = document.getElementById('selectedCount');
+        
+        function updateDeleteButton() {
+            // Only count checkboxes in visible rows
+            const checkboxes = document.querySelectorAll('.search-checkbox:checked');
+            const visibleChecked = Array.from(checkboxes).filter(cb => {
+                const row = cb.closest('tr');
+                return row && row.style.display !== 'none';
+            });
+            const count = visibleChecked.length;
+            if (selectedCountSpan) selectedCountSpan.textContent = count;
+            if (deleteBtn) deleteBtn.style.display = count > 0 ? 'block' : 'none';
+        }
+        
+        // Select all checkbox
+        if (selectAllCheckbox) {
+            selectAllCheckbox.addEventListener('change', function() {
+                const checkboxes = document.querySelectorAll('.search-checkbox');
+                checkboxes.forEach(cb => cb.checked = this.checked);
+                updateDeleteButton();
+            });
+        }
+        
+        // Select/Deselect all buttons
+        if (selectAllBtn) {
+            selectAllBtn.addEventListener('click', function() {
+                const checkboxes = document.querySelectorAll('.search-checkbox');
+                checkboxes.forEach(cb => cb.checked = true);
+                if (selectAllCheckbox) selectAllCheckbox.checked = true;
+                updateDeleteButton();
+            });
+        }
+        
+        if (deselectAllBtn) {
+            deselectAllBtn.addEventListener('click', function() {
+                const checkboxes = document.querySelectorAll('.search-checkbox');
+                checkboxes.forEach(cb => cb.checked = false);
+                if (selectAllCheckbox) selectAllCheckbox.checked = false;
+                updateDeleteButton();
+            });
+        }
+        
+        // Batch and search filtering
+        function filterByBatch() {
+            const batchId = document.getElementById('batchFilter').value;
+            const rows = document.querySelectorAll('.history-row');
+            const exportBatchLink = document.getElementById('exportBatchLink');
+            
+            rows.forEach(row => {
+                const rowBatchId = row.dataset.batchId;
+                
+                if (batchId === 'all') {
+                    row.style.display = '';
+                } else if (batchId === 'none') {
+                    row.style.display = rowBatchId === 'none' ? '' : 'none';
+                } else {
+                    row.style.display = rowBatchId === batchId ? '' : 'none';
+                }
+            });
+            
+            // Show/hide batch export button
+            if (batchId !== 'all' && batchId !== 'none') {
+                exportBatchLink.href = `/batch/${batchId}/export.csv`;
+                exportBatchLink.style.display = 'inline-block';
+            } else {
+                exportBatchLink.style.display = 'none';
+            }
+            
+            // Also apply search filter
+            filterBySearch();
+            
+            // Update delete button visibility
+            updateDeleteButton();
+        }
+        
+        function filterBySearch() {
+            const searchTerm = document.getElementById('searchFilter').value.toLowerCase();
+            const rows = document.querySelectorAll('.history-row');
+            
+            rows.forEach(row => {
+                // Only filter if row is already visible from batch filter
+                if (row.style.display !== 'none') {
+                    const rowTerm = row.dataset.searchTerm;
+                    if (rowTerm.includes(searchTerm)) {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
+                    }
+                }
+            });
+            
+            // Update delete button visibility
+            updateDeleteButton();
+        }
+        
+        // Individual checkbox changes
+        document.querySelectorAll('.search-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('change', updateDeleteButton);
+        });
+        
+        // Delete selected searches
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', async function() {
+                const checkboxes = document.querySelectorAll('.search-checkbox:checked');
+                const searchIds = Array.from(checkboxes).map(cb => cb.dataset.searchId);
+                
+                if (searchIds.length === 0) return;
+                
+                const confirmMsg = `Are you sure you want to delete ${searchIds.length} search${searchIds.length > 1 ? 'es' : ''}?`;
+                if (!confirm(confirmMsg)) return;
+                
+                try {
+                    const response = await fetch('/delete_searches', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ search_ids: searchIds })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        // Remove deleted rows
+                        checkboxes.forEach(cb => {
+                            cb.closest('tr').remove();
+                        });
+                        updateDeleteButton();
+                        
+                        // Show success message
+                        alert(`Successfully deleted ${searchIds.length} search${searchIds.length > 1 ? 'es' : ''}!`);
+                        
+                        // Reload if no searches left
+                        if (document.querySelectorAll('.search-checkbox').length === 0) {
+                            window.location.reload();
+                        }
+                    } else {
+                        alert('Error: ' + result.error);
+                    }
+                } catch (error) {
+                    alert('Error deleting searches: ' + error.message);
+                }
+            });
+        }
+    </script>
+</body>
+</html>
