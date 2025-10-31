@@ -237,6 +237,29 @@ class RoundnessAnalyzer:
         if not images_pil:
             return []
         
+        # Fallback to sequential if batch fails
+        try:
+            return self._detect_objects_batch_impl(images_pil, target_text, threshold)
+        except Exception as e:
+            # If batch processing fails, fall back to sequential
+            print(f"    ⚠️  Batch detection failed, using sequential processing...")
+            results = []
+            for img in images_pil:
+                try:
+                    detection = self.detect_object(img, target_text, threshold)
+                    results.append(detection)
+                except:
+                    results.append(None)
+            return results
+    
+    def _detect_objects_batch_impl(self, images_pil: List[Image.Image], target_text: str, threshold: float = 0.1) -> List[Optional[Dict]]:
+        """Internal batch detection implementation"""
+        
+        # DIAGNOSTIC: Check image dimensions
+        print(f"    DEBUG: Batch of {len(images_pil)} images for '{target_text}'")
+        for i, img in enumerate(images_pil):
+            print(f"      Image {i}: {img.size} mode={img.mode}")
+        
         # Try multiple query variations
         text_queries = [
             [target_text],
@@ -247,11 +270,23 @@ class RoundnessAnalyzer:
         results_per_image = [[] for _ in images_pil]
         
         for queries in text_queries:
-            # Process all images at once
-            inputs = self.processor(text=queries, images=images_pil, return_tensors="pt")
-            
-            with torch.no_grad():
-                outputs = self.owl_model(**inputs)
+            print(f"    DEBUG: Trying query: {queries[0]}")
+            try:
+                inputs = self.processor(text=queries, images=images_pil, return_tensors="pt")
+                
+                # DIAGNOSTIC: Check tensor shapes
+                print(f"      input_ids shape: {inputs['input_ids'].shape}")
+                print(f"      pixel_values shape: {inputs['pixel_values'].shape}")
+                
+                print(f"      Running model forward pass...")
+                with torch.no_grad():
+                    outputs = self.owl_model(**inputs)
+                
+                print(f"      logits shape: {outputs.logits.shape}")
+                print(f"      Model forward pass completed successfully")
+            except Exception as model_error:
+                print(f"      ERROR in model forward pass: {type(model_error).__name__}: {model_error}")
+                continue
             
             # Get target sizes for all images
             target_sizes = torch.Tensor([img.size[::-1] for img in images_pil])
@@ -352,12 +387,10 @@ class RoundnessAnalyzer:
         from skimage.measure import regionprops
         
         # IMPROVED: More aggressive smoothing to remove noise
-        kernel_smooth = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))  # Moderate kernel
+        kernel_smooth = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         mask_smooth = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel_smooth)
         mask_smooth = cv2.morphologyEx(mask_smooth, cv2.MORPH_CLOSE, kernel_smooth)
         
-        # Don't use Gaussian blur on binary masks - it destroys them!
-        # Instead, use more morphological operations for smoothing
         kernel_round = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         mask_smooth = cv2.morphologyEx(mask_smooth, cv2.MORPH_CLOSE, kernel_round)
         
@@ -371,7 +404,7 @@ class RoundnessAnalyzer:
         main_contour = max(contours, key=cv2.contourArea)
         
         # Apply additional contour smoothing using approximation
-        epsilon = 0.001 * cv2.arcLength(main_contour, True)  # Small epsilon for gentle smoothing
+        epsilon = 0.001 * cv2.arcLength(main_contour, True)
         main_contour = cv2.approxPolyDP(main_contour, epsilon, True)
         
         # Basic area and perimeter from smoothed contour
@@ -388,13 +421,10 @@ class RoundnessAnalyzer:
             return None
         
         # Calculate CIRCULARITY from actual contour (4πA/P²)
-        # This measures how close the actual shape is to a circle
-        # High circularity = round perimeter, low circularity = jagged/elongated
         circularity = (4 * np.pi * area) / (perimeter ** 2)
         circularity = min(circularity, 1.0)
         
         # FIT ELLIPSE for aspect ratio and eccentricity only
-        # (Ellipse fitting is good for these metrics but not for circularity)
         if len(main_contour) >= 5:
             try:
                 ellipse = cv2.fitEllipse(main_contour)
@@ -406,9 +436,9 @@ class RoundnessAnalyzer:
                 
                 # Use ellipse-based metrics for aspect ratio and eccentricity
                 if major_axis > 0:
-                    aspect_ratio = minor_axis / major_axis  # 1.0 = circle
+                    aspect_ratio = minor_axis / major_axis
                     eccentricity_raw = np.sqrt(1 - (minor_axis / major_axis) ** 2)
-                    eccentricity = 1.0 - eccentricity_raw  # Invert: 1.0 = circle
+                    eccentricity = 1.0 - eccentricity_raw
                 else:
                     aspect_ratio = 0.0
                     eccentricity = 0.0
@@ -445,18 +475,18 @@ class RoundnessAnalyzer:
         
         # COMPOSITE SCORE (weighted combination)
         composite = (
-            0.30 * circularity +      # Primary geometric measure
-            0.25 * aspect_ratio +     # Elongation from ellipse
-            0.20 * eccentricity +     # Ovalness from ellipse
-            0.15 * solidity +         # Indentation check
-            0.10 * convexity          # Smoothness check
+            0.30 * circularity +
+            0.25 * aspect_ratio +
+            0.20 * eccentricity +
+            0.15 * solidity +
+            0.10 * convexity
         )
         
         # Create boundary visualization
         boundary_edges = np.zeros_like(mask_smooth)
         cv2.drawContours(boundary_edges, [main_contour], -1, 255, 2)
         
-        # Light smoothing for visualization only (doesn't affect metrics)
+        # Light smoothing for visualization only
         epsilon = 0.002 * perimeter
         smooth_contour = cv2.approxPolyDP(main_contour, epsilon, True)
         
@@ -557,7 +587,7 @@ def analyze_images_batch(
                 images_pil.append(None)
                 images_array.append(None)
         
-        # Batch detect objects
+        # Batch detect objects (with fallback to sequential)
         valid_indices = [i for i, img in enumerate(images_pil) if img is not None]
         valid_images = [images_pil[i] for i in valid_indices]
         
