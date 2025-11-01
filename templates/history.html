@@ -51,6 +51,11 @@
                         <a id="exportBatchLink" href="#" class="btn-primary" style="margin-left: 10px; text-decoration: none; display: none;">
                             📊 Export Batch CSV
                         </a>
+                        <a id="deleteBatchLink" href="#" class="btn-danger" 
+                        style="margin-left: 10px; text-decoration: none; display: none;" 
+                        onclick="event.preventDefault(); deleteBatch();">
+                            🗑️ Delete Batch
+                        </a>
                     </div>
                     <button id="deleteSelected" class="btn-danger" style="display: none;">
                         Delete Selected (<span id="selectedCount">0</span>)
@@ -198,6 +203,14 @@
             } else {
                 exportBatchLink.style.display = 'none';
             }
+            // Show/hide delete batch button
+            const deleteBatchLink = document.getElementById('deleteBatchLink');
+            if (batchId !== 'all' && batchId !== 'none') {
+                deleteBatchLink.style.display = 'inline-block';
+                deleteBatchLink.setAttribute('data-batch-id', batchId);
+            } else {
+                deleteBatchLink.style.display = 'none';
+            }
             
             // Also apply search filter
             filterBySearch();
@@ -274,6 +287,37 @@
                     alert('Error deleting searches: ' + error.message);
                 }
             });
+        }
+        // Delete batch function
+        async function deleteBatch() {
+            const batchFilter = document.getElementById('batchFilter');
+            const batchId = batchFilter.value;
+            const batchName = batchFilter.options[batchFilter.selectedIndex].text;
+            
+            if (!batchId || batchId === 'all' || batchId === 'none') return;
+            
+            const confirmMsg = `Are you sure you want to delete the entire batch "${batchName}" and all its searches?\n\nThis will permanently delete all searches associated with this batch.\n\nThis action cannot be undone.`;
+            if (!confirm(confirmMsg)) return;
+            
+            try {
+                const response = await fetch(`/delete_batch/${batchId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert(`✓ Successfully deleted batch and ${result.deleted_count} associated searches!`);
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error deleting batch: ' + error.message);
+            }
         }
     </script>
 </body>

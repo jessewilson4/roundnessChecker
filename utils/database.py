@@ -621,7 +621,19 @@ class Database:
         
         return batches
     
-    
+    def delete_batch(self, batch_id: int) -> bool:
+        """Delete a batch record"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM batches WHERE id = ?', (batch_id,))
+        
+        deleted = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        
+        return deleted
+
     def get_incomplete_batches(self) -> List[Dict]:
         """Get batches that are incomplete (not 'complete' status)"""
         conn = sqlite3.connect(self.db_path)

@@ -14,6 +14,7 @@ import numpy as np
 from PIL import Image
 import io
 import torch
+import gc
 from typing import Optional, Dict, Tuple, List
 from pathlib import Path
 
@@ -160,7 +161,7 @@ class RoundnessAnalyzer:
         
         print("   ✓ Models loaded\n")
     
-    def detect_object(self, image_pil: Image.Image, target_text: str, threshold: float = 0.1) -> Optional[Dict]:
+    def detect_object(self, image_pil: Image.Image, target_text: str, threshold: float = 0.05) -> Optional[Dict]:
         """
         Detect object in image using OWL-ViT.
         
@@ -222,7 +223,7 @@ class RoundnessAnalyzer:
         
         return filtered[0] if filtered else None
     
-    def detect_objects_batch(self, images_pil: List[Image.Image], target_text: str, threshold: float = 0.1) -> List[Optional[Dict]]:
+    def detect_objects_batch(self, images_pil: List[Image.Image], target_text: str, threshold: float = 0.05) -> List[Optional[Dict]]:
         """
         OPTIMIZED: Batch detect objects in multiple images simultaneously.
         
@@ -240,25 +241,28 @@ class RoundnessAnalyzer:
         # Fallback to sequential if batch fails
         try:
             return self._detect_objects_batch_impl(images_pil, target_text, threshold)
+        except RuntimeError as e:
+            # Known transformers library bug with empty batch results
+            if 'shape' in str(e) and 'invalid for input of size' in str(e):
+                # Silently fall back - this is expected for some queries
+                pass
+            else:
+                print(f"    ⚠️  Unexpected batch error: {e}")
         except Exception as e:
-            # If batch processing fails, fall back to sequential
-            print(f"    ⚠️  Batch detection failed, using sequential processing...")
-            results = []
-            for img in images_pil:
-                try:
-                    detection = self.detect_object(img, target_text, threshold)
-                    results.append(detection)
-                except:
-                    results.append(None)
-            return results
-    
-    def _detect_objects_batch_impl(self, images_pil: List[Image.Image], target_text: str, threshold: float = 0.1) -> List[Optional[Dict]]:
-        """Internal batch detection implementation"""
+            print(f"    ⚠️  Batch detection failed: {e}")
         
-        # DIAGNOSTIC: Check image dimensions
-        print(f"    DEBUG: Batch of {len(images_pil)} images for '{target_text}'")
-        for i, img in enumerate(images_pil):
-            print(f"      Image {i}: {img.size} mode={img.mode}")
+        # Sequential processing fallback
+        results = []
+        for img in images_pil:
+            try:
+                detection = self.detect_object(img, target_text, threshold)
+                results.append(detection)
+            except:
+                results.append(None)
+        return results
+    
+    def _detect_objects_batch_impl(self, images_pil: List[Image.Image], target_text: str, threshold: float = 0.05) -> List[Optional[Dict]]:
+        """Internal batch detection implementation"""
         
         # Try multiple query variations
         text_queries = [
@@ -268,24 +272,26 @@ class RoundnessAnalyzer:
         ]
         
         results_per_image = [[] for _ in images_pil]
+        batch_failed = False
         
-        for queries in text_queries:
-            print(f"    DEBUG: Trying query: {queries[0]}")
+        for query_idx, queries in enumerate(text_queries):
             try:
                 inputs = self.processor(text=queries, images=images_pil, return_tensors="pt")
                 
-                # DIAGNOSTIC: Check tensor shapes
-                print(f"      input_ids shape: {inputs['input_ids'].shape}")
-                print(f"      pixel_values shape: {inputs['pixel_values'].shape}")
-                
-                print(f"      Running model forward pass...")
                 with torch.no_grad():
                     outputs = self.owl_model(**inputs)
                 
-                print(f"      logits shape: {outputs.logits.shape}")
-                print(f"      Model forward pass completed successfully")
+                # If we got here, batch processing worked!
+            except RuntimeError as model_error:
+                # Batch processing failed - this is the transformers library bug
+                if 'shape' in str(model_error) and 'invalid for input of size' in str(model_error):
+                    # This is the known batch bug - raise immediately to trigger sequential fallback
+                    raise
+                else:
+                    # Unknown error - try next query
+                    continue
             except Exception as model_error:
-                print(f"      ERROR in model forward pass: {type(model_error).__name__}: {model_error}")
+                # Unknown error - try next query
                 continue
             
             # Get target sizes for all images
@@ -528,6 +534,13 @@ def analyze_image_roundness(image_data: bytes, search_term: str, analyzer: Round
     try:
         # Load image
         img_pil = Image.open(io.BytesIO(image_data)).convert('RGB')
+        
+        # OPTIMIZATION: Resize to 512px max dimension if larger
+        if max(img_pil.width, img_pil.height) > 512:
+            ratio = 512 / max(img_pil.width, img_pil.height)
+            new_size = (int(img_pil.width * ratio), int(img_pil.height * ratio))
+            img_pil = img_pil.resize(new_size, Image.Resampling.LANCZOS)
+        
         img_array = np.array(img_pil)
         
         # Detect object
@@ -549,6 +562,11 @@ def analyze_image_roundness(image_data: bytes, search_term: str, analyzer: Round
         viz = create_visualizations(img_array, detection, mask, result)
         result['visualizations'] = viz
         result['detection_confidence'] = detection['confidence']
+        
+        # MEMORY CLEANUP
+        del mask, result['mask']
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         
         return result
         
@@ -581,6 +599,13 @@ def analyze_images_batch(
         for img_data in images_data:
             try:
                 img_pil = Image.open(io.BytesIO(img_data)).convert('RGB')
+                
+                # OPTIMIZATION: Resize to 512px max dimension if larger
+                if max(img_pil.width, img_pil.height) > 512:
+                    ratio = 512 / max(img_pil.width, img_pil.height)
+                    new_size = (int(img_pil.width * ratio), int(img_pil.height * ratio))
+                    img_pil = img_pil.resize(new_size, Image.Resampling.LANCZOS)
+                
                 images_pil.append(img_pil)
                 images_array.append(np.array(img_pil))
             except:
@@ -626,9 +651,20 @@ def analyze_images_batch(
                 
                 results.append(analysis)
                 
+                # MEMORY CLEANUP: Release memory after each image
+                del mask, analysis['mask']  # Remove large arrays
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
             except Exception as e:
                 print(f"    ✗ Error processing image {i}: {e}")
                 results.append(None)
+        
+        # AGGRESSIVE MEMORY CLEANUP: Force garbage collection after batch completes
+        del images_pil, images_array, detections
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         
         return results
         

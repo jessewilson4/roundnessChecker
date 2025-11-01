@@ -1185,6 +1185,28 @@ def batch_stop(batch_id):
     return jsonify({'success': False, 'error': 'Batch not running'})
 
 
+@app.route('/delete_batch/<int:batch_id>', methods=['POST'])
+def delete_batch(batch_id):
+    """Delete an entire batch and all associated searches"""
+    try:
+        # Get all searches for this batch
+        searches = database.get_batch_searches(batch_id)
+        search_ids = [s['id'] for s in searches]
+        
+        # Delete all searches
+        if search_ids:
+            database.delete_searches(search_ids)
+        
+        # Delete the batch itself (needs new database method)
+        database.delete_batch(batch_id)
+        
+        return jsonify({'success': True, 'deleted_count': len(search_ids)})
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/batch/<int:batch_id>/export.csv')
 def batch_export(batch_id):
     """Export batch results"""
