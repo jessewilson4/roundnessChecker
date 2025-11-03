@@ -1,12 +1,29 @@
 """
-Object Detection and Segmentation using OWL-ViT + SAM
-OPTIMIZED: Added batch inference for parallel processing
-
-This module handles:
-1. Open-vocabulary object detection (OWL-ViT) - NOW WITH BATCH SUPPORT
-2. Object segmentation (SAM)
-3. Edge detection with contour smoothing
-4. Roundness metric calculation
+# AI_PSEUDOCODE:
+# @file: utils/edge_detection.py
+# @purpose: object detection + segmentation + roundness analysis
+# @models: [OWL-ViT, SAM]
+# 
+# MODIFIED: @date 2025-11-02
+# CHANGE_01: resize target 512px → 1024px (lines marked with # MODIFIED)
+# CHANGE_02: add detection quality filters (confidence + bbox_size)
+#
+# ALGO: analyze_single_image
+#   IN: @img_bytes:bytes, @term:str, @analyzer:obj
+#   OUT: @metrics:obj OR None
+#   STEPS:
+#     1. load + resize(1024px) → @img  # MODIFIED: was 512px
+#     2. @owl_vit.detect(@img, @term) → @bbox + confidence
+#     3. FILTER: IF confidence < 0.15 → RETURN None  # NEW
+#     4. FILTER: IF bbox_area > 90% img_area → RETURN None  # NEW
+#     5. @sam.segment(@img, @bbox) → @mask
+#     6. analyze_roundness(@mask) → @metrics
+#     7. create_visualizations() → @viz
+#     8. RETURN @metrics + @viz
+#
+# FILTERS_ADDED:
+#   - confidence_threshold: 0.15 (reject low confidence detections)
+#   - closeup_threshold: 0.90 (reject if bbox covers >90% of image)
 """
 
 import cv2
@@ -104,6 +121,52 @@ def remove_outliers(results: list, metric: str = 'composite') -> Tuple[list, lis
             outliers.append(r)
     
     return filtered, outliers
+
+
+def create_visualizations(
+    original: np.ndarray,
+    detection: Dict,
+    mask: np.ndarray,
+    analysis: Dict
+) -> Dict[str, bytes]:
+    """Create visualization images"""
+    viz = {}
+    
+    # Original with bbox
+    img_bbox = original.copy()
+    x1, y1, x2, y2 = detection['bbox']
+    cv2.rectangle(img_bbox, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    viz['original'] = array_to_jpeg(img_bbox)
+    
+    # Grayscale
+    gray = cv2.cvtColor(original, cv2.COLOR_RGB2GRAY)
+    viz['grayscale'] = array_to_jpeg(cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB))
+    
+    # SAM mask visualization
+    masked_img = original.copy()
+    masked_img[mask == 0] = masked_img[mask == 0] * 0.3
+    viz['segmentation'] = array_to_jpeg(masked_img)
+    
+    # Raw edges
+    viz['edges_raw'] = array_to_jpeg(cv2.cvtColor(analysis['edges_raw'], cv2.COLOR_GRAY2RGB))
+    
+    # Closed edges
+    viz['edges_closed'] = array_to_jpeg(cv2.cvtColor(analysis['edges_closed'], cv2.COLOR_GRAY2RGB))
+    
+    # Final contour
+    contour_img = original.copy()
+    cv2.drawContours(contour_img, [analysis['contour_smooth']], -1, (0, 255, 0), 2)
+    viz['contour'] = array_to_jpeg(contour_img)
+    
+    return viz
+
+
+def array_to_jpeg(array: np.ndarray, quality: int = 85) -> bytes:
+    """Convert numpy array to JPEG bytes"""
+    img = Image.fromarray(array)
+    buffer = io.BytesIO()
+    img.save(buffer, format='JPEG', quality=quality)
+    return buffer.getvalue()
 
 
 def auto_canny(image, sigma=0.33):
@@ -272,7 +335,6 @@ class RoundnessAnalyzer:
         ]
         
         results_per_image = [[] for _ in images_pil]
-        batch_failed = False
         
         for query_idx, queries in enumerate(text_queries):
             try:
@@ -381,7 +443,6 @@ class RoundnessAnalyzer:
     def analyze_roundness(self, image_array: np.ndarray, mask: np.ndarray) -> Dict:
         """
         Analyze roundness using comprehensive shape descriptors with ellipse fitting.
-        Uses fitted ellipse for true geometric properties, ignoring pixel-level noise.
         
         Args:
             image_array: RGB image array
@@ -392,7 +453,7 @@ class RoundnessAnalyzer:
         """
         from skimage.measure import regionprops
         
-        # IMPROVED: More aggressive smoothing to remove noise
+        # Aggressive smoothing
         kernel_smooth = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         mask_smooth = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel_smooth)
         mask_smooth = cv2.morphologyEx(mask_smooth, cv2.MORPH_CLOSE, kernel_smooth)
@@ -400,47 +461,39 @@ class RoundnessAnalyzer:
         kernel_round = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         mask_smooth = cv2.morphologyEx(mask_smooth, cv2.MORPH_CLOSE, kernel_round)
         
-        # Extract ONLY the outer boundary with approximation to smooth
+        # Extract outer boundary
         contours, _ = cv2.findContours(mask_smooth, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         if not contours:
             return None
         
-        # Get largest contour (outer boundary)
         main_contour = max(contours, key=cv2.contourArea)
-        
-        # Apply additional contour smoothing using approximation
         epsilon = 0.001 * cv2.arcLength(main_contour, True)
         main_contour = cv2.approxPolyDP(main_contour, epsilon, True)
         
-        # Basic area and perimeter from smoothed contour
         area = cv2.contourArea(main_contour)
         perimeter = cv2.arcLength(main_contour, True)
         
         if area < 100 or perimeter == 0:
             return None
         
-        # Get region properties for additional metrics
         try:
             props = regionprops(mask_smooth)[0]
         except:
             return None
         
-        # Calculate CIRCULARITY from actual contour (4πA/P²)
         circularity = (4 * np.pi * area) / (perimeter ** 2)
         circularity = min(circularity, 1.0)
         
-        # FIT ELLIPSE for aspect ratio and eccentricity only
+        # Fit ellipse
         if len(main_contour) >= 5:
             try:
                 ellipse = cv2.fitEllipse(main_contour)
                 (center_x, center_y), (minor_axis, major_axis), angle = ellipse
                 
-                # Ensure major >= minor
                 if minor_axis > major_axis:
                     major_axis, minor_axis = minor_axis, major_axis
                 
-                # Use ellipse-based metrics for aspect ratio and eccentricity
                 if major_axis > 0:
                     aspect_ratio = minor_axis / major_axis
                     eccentricity_raw = np.sqrt(1 - (minor_axis / major_axis) ** 2)
@@ -449,7 +502,6 @@ class RoundnessAnalyzer:
                     aspect_ratio = 0.0
                     eccentricity = 0.0
             except:
-                # Fallback to regionprops if ellipse fitting fails
                 if props.minor_axis_length > 0:
                     aspect_ratio_raw = props.major_axis_length / props.minor_axis_length
                     aspect_ratio = 1.0 / aspect_ratio_raw if aspect_ratio_raw > 0 else 0.0
@@ -458,7 +510,6 @@ class RoundnessAnalyzer:
                 eccentricity = 1.0 - props.eccentricity
                 ellipse = None
         else:
-            # Fallback to regionprops
             if props.minor_axis_length > 0:
                 aspect_ratio_raw = props.major_axis_length / props.minor_axis_length
                 aspect_ratio = 1.0 / aspect_ratio_raw if aspect_ratio_raw > 0 else 0.0
@@ -467,10 +518,9 @@ class RoundnessAnalyzer:
             eccentricity = 1.0 - props.eccentricity
             ellipse = None
         
-        # 4. SOLIDITY: Area/Convex hull area (detects indentations)
         solidity = props.solidity
         
-        # 5. CONVEXITY: Convex hull perimeter / actual perimeter
+        # Convexity
         hull = cv2.convexHull(main_contour)
         hull_perimeter = cv2.arcLength(hull, True)
         if perimeter > 0:
@@ -479,7 +529,7 @@ class RoundnessAnalyzer:
         else:
             convexity = 0.0
         
-        # COMPOSITE SCORE (weighted combination)
+        # Composite score
         composite = (
             0.30 * circularity +
             0.25 * aspect_ratio +
@@ -488,11 +538,10 @@ class RoundnessAnalyzer:
             0.10 * convexity
         )
         
-        # Create boundary visualization
+        # Boundary visualization
         boundary_edges = np.zeros_like(mask_smooth)
         cv2.drawContours(boundary_edges, [main_contour], -1, 255, 2)
         
-        # Light smoothing for visualization only
         epsilon = 0.002 * perimeter
         smooth_contour = cv2.approxPolyDP(main_contour, epsilon, True)
         
@@ -512,7 +561,6 @@ class RoundnessAnalyzer:
             'mask': mask
         }
         
-        # Add ellipse if fitted successfully
         if ellipse is not None:
             result['ellipse'] = ellipse
         
@@ -522,6 +570,8 @@ class RoundnessAnalyzer:
 def analyze_image_roundness(image_data: bytes, search_term: str, analyzer: RoundnessAnalyzer) -> Optional[Dict]:
     """
     Complete pipeline: detect, segment, and analyze roundness.
+    
+    MODIFIED: Resolution increased to 1024px + added detection filters
     
     Args:
         image_data: Raw image bytes
@@ -535,9 +585,9 @@ def analyze_image_roundness(image_data: bytes, search_term: str, analyzer: Round
         # Load image
         img_pil = Image.open(io.BytesIO(image_data)).convert('RGB')
         
-        # OPTIMIZATION: Resize to 512px max dimension if larger
-        if max(img_pil.width, img_pil.height) > 512:
-            ratio = 512 / max(img_pil.width, img_pil.height)
+        # MODIFIED: Resize to 1024px max dimension (was 512px)
+        if max(img_pil.width, img_pil.height) > 1024:
+            ratio = 1024 / max(img_pil.width, img_pil.height)
             new_size = (int(img_pil.width * ratio), int(img_pil.height * ratio))
             img_pil = img_pil.resize(new_size, Image.Resampling.LANCZOS)
         
@@ -547,6 +597,19 @@ def analyze_image_roundness(image_data: bytes, search_term: str, analyzer: Round
         detection = analyzer.detect_object(img_pil, search_term)
         
         if detection is None:
+            return None
+        
+        # NEW: FILTER 1 - Confidence check
+        if detection['confidence'] < 0.15:
+            print(f"    ✗ Low confidence: {detection['confidence']:.2f}")
+            return None
+        
+        # NEW: FILTER 2 - Bbox size check (closeup filter)
+        bbox = detection['bbox']
+        bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+        img_area = img_array.shape[0] * img_array.shape[1]
+        if bbox_area / img_area > 0.90:
+            print(f"    ✗ Closeup detected: {bbox_area/img_area:.1%} coverage")
             return None
         
         # Segment object
@@ -563,7 +626,7 @@ def analyze_image_roundness(image_data: bytes, search_term: str, analyzer: Round
         result['visualizations'] = viz
         result['detection_confidence'] = detection['confidence']
         
-        # MEMORY CLEANUP
+        # Memory cleanup
         del mask, result['mask']
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -583,6 +646,8 @@ def analyze_images_batch(
     """
     OPTIMIZED: Batch process multiple images with parallel detection.
     
+    MODIFIED: Resolution increased to 1024px
+    
     Args:
         images_data: List of raw image bytes
         search_term: Object to detect
@@ -600,9 +665,9 @@ def analyze_images_batch(
             try:
                 img_pil = Image.open(io.BytesIO(img_data)).convert('RGB')
                 
-                # OPTIMIZATION: Resize to 512px max dimension if larger
-                if max(img_pil.width, img_pil.height) > 512:
-                    ratio = 512 / max(img_pil.width, img_pil.height)
+                # MODIFIED: Resize to 1024px max dimension (was 512px)
+                if max(img_pil.width, img_pil.height) > 1024:
+                    ratio = 1024 / max(img_pil.width, img_pil.height)
                     new_size = (int(img_pil.width * ratio), int(img_pil.height * ratio))
                     img_pil = img_pil.resize(new_size, Image.Resampling.LANCZOS)
                 
@@ -612,7 +677,7 @@ def analyze_images_batch(
                 images_pil.append(None)
                 images_array.append(None)
         
-        # Batch detect objects (with fallback to sequential)
+        # Batch detect objects
         valid_indices = [i for i, img in enumerate(images_pil) if img is not None]
         valid_images = [images_pil[i] for i in valid_indices]
         
@@ -634,6 +699,20 @@ def analyze_images_batch(
                 continue
             
             try:
+                # NEW: Apply detection filters
+                if detection['confidence'] < 0.15:
+                    print(f"    ✗ Image {i}: Low confidence {detection['confidence']:.2f}")
+                    results.append(None)
+                    continue
+                
+                bbox = detection['bbox']
+                bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+                img_area = img_array.shape[0] * img_array.shape[1]
+                if bbox_area / img_area > 0.90:
+                    print(f"    ✗ Image {i}: Closeup {bbox_area/img_area:.1%}")
+                    results.append(None)
+                    continue
+                
                 # Segment object
                 mask = analyzer.segment_object(img_array, detection['bbox'])
                 
@@ -651,8 +730,8 @@ def analyze_images_batch(
                 
                 results.append(analysis)
                 
-                # MEMORY CLEANUP: Release memory after each image
-                del mask, analysis['mask']  # Remove large arrays
+                # Memory cleanup
+                del mask, analysis['mask']
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                 
@@ -660,7 +739,7 @@ def analyze_images_batch(
                 print(f"    ✗ Error processing image {i}: {e}")
                 results.append(None)
         
-        # AGGRESSIVE MEMORY CLEANUP: Force garbage collection after batch completes
+        # Aggressive memory cleanup
         del images_pil, images_array, detections
         gc.collect()
         if torch.cuda.is_available():
@@ -669,51 +748,5 @@ def analyze_images_batch(
         return results
         
     except Exception as e:
-        print(f"    ✗ Batch error: {e}")
+        print(f"Batch processing failed: {e}")
         return [None] * len(images_data)
-
-
-def create_visualizations(
-    original: np.ndarray,
-    detection: Dict,
-    mask: np.ndarray,
-    analysis: Dict
-) -> Dict[str, bytes]:
-    """Create visualization images"""
-    viz = {}
-    
-    # Original with bbox
-    img_bbox = original.copy()
-    x1, y1, x2, y2 = detection['bbox']
-    cv2.rectangle(img_bbox, (x1, y1), (x2, y2), (0, 255, 0), 2)
-    viz['original'] = array_to_jpeg(img_bbox)
-    
-    # Grayscale
-    gray = cv2.cvtColor(original, cv2.COLOR_RGB2GRAY)
-    viz['grayscale'] = array_to_jpeg(cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB))
-    
-    # SAM mask visualization
-    masked_img = original.copy()
-    masked_img[mask == 0] = masked_img[mask == 0] * 0.3
-    viz['segmentation'] = array_to_jpeg(masked_img)
-    
-    # Raw edges
-    viz['edges_raw'] = array_to_jpeg(cv2.cvtColor(analysis['edges_raw'], cv2.COLOR_GRAY2RGB))
-    
-    # Closed edges
-    viz['edges_closed'] = array_to_jpeg(cv2.cvtColor(analysis['edges_closed'], cv2.COLOR_GRAY2RGB))
-    
-    # Final contour
-    contour_img = original.copy()
-    cv2.drawContours(contour_img, [analysis['contour_smooth']], -1, (0, 255, 0), 2)
-    viz['contour'] = array_to_jpeg(contour_img)
-    
-    return viz
-
-
-def array_to_jpeg(array: np.ndarray, quality: int = 85) -> bytes:
-    """Convert numpy array to JPEG bytes"""
-    img = Image.fromarray(array)
-    buffer = io.BytesIO()
-    img.save(buffer, format='JPEG', quality=quality)
-    return buffer.getvalue()
