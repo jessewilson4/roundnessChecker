@@ -1,0 +1,23 @@
+diff --git a/utils/__init__.py b/utils/__init__.py
+index a1b2c3d..e4f5g6h 100644
+--- a/utils/__init__.py
++++ b/utils/__init__.py
+@@ -2,6 +2,8 @@
+ Utilities for Image Roundness Analyzer
+ """
+ 
+ from .pexels_search import PexelsSearcher
++from .unsplash_search import UnsplashSearcher
++from .pixabay_search import PixabaySearcher
+ from .edge_detection import (
+     analyze_image_roundness,
+     RoundnessAnalyzer,
+@@ -12,6 +14,8 @@ from .edge_detection import (
+ 
+ __all__ = [
+     'PexelsSearcher',
++    'UnsplashSearcher',
++    'PixabaySearcher',
+     'analyze_image_roundness',
+     'RoundnessAnalyzer',
+     'remove_outliers',
