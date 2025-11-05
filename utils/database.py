@@ -253,6 +253,16 @@ class Database:
         return history
     
     
+    def get_all_searches(self, limit: int = 50) -> List[Dict]:
+        """
+        Alias for get_search_history() for backwards compatibility.
+        
+        Args:
+            limit: Maximum number of results
+        """
+        return self.get_search_history(limit)
+    
+    
     def get_previous_searches(self, search_term: str, limit: int = 5) -> List[Dict]:
         """
         Get previous searches for a specific term (for autocomplete).
