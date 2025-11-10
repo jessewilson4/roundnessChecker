@@ -1,0 +1,185 @@
+diff --git a/utils/__init__.py b/utils/__init__.py
+index a1b2c3d..e4f5g6h 100644
+--- a/utils/__init__.py
++++ b/utils/__init__.py
+@@ -2,6 +2,7 @@
+ Utilities for Image Roundness Analyzer
+ """
+ 
++from .google_search import GoogleSearcher
+ from .pexels_search import PexelsSearcher
+ from .edge_detection import (
+     analyze_image_roundness,
+@@ -12,6 +13,7 @@ from .edge_detection import (
+ from .database import Database
+ 
+ __all__ = [
++    'GoogleSearcher',
+     'PexelsSearcher',
+     'analyze_image_roundness',
+     'RoundnessAnalyzer',
+diff --git a/app.py b/app.py
+index abc123d..def456g 100644
+--- a/app.py
++++ b/app.py
+@@ -26,9 +26,7 @@ import gc
+ import torch
+ from concurrent.futures import ThreadPoolExecutor, as_completed
+ from utils import (
+-    PexelsSearcher,
+-    UnsplashSearcher,
+-    PixabaySearcher,
++    GoogleSearcher,
+     compress_thumbnail,
+     Database,
+     remove_outliers
+@@ -64,15 +62,13 @@ app.config['SECRET_KEY'] = 'your-secret-key-here-change-in-production'
+ app.config['CACHE_DIR'] = './cache'
+ app.config['IMAGES_DIR'] = './cache/images'
+ 
+-# API Keys
+-PEXELS_API_KEY = "RHgT85Bjti2XozygivPv3JnQ9ZDp0ivX6wUjEalkjbqtGXgqH4pU6dOo"
+-UNSPLASH_ACCESS_KEY = "6ABQPlA4CSpGyuOdd8rdJHqiKQqP0cH58E9pf3nuACc"  # NEW
+-PIXABAY_API_KEY = "52936735-d4c77f8b0486c2ea7d1ad2c1a"  # NEW
++# Google API Keys
++GOOGLE_API_KEY = "YOUR_GOOGLE_API_KEY_HERE"
++GOOGLE_CSE_ID = "YOUR_GOOGLE_CSE_ID_HERE"
+ 
+-# Configuration for parallel processing
+ BATCH_SIZE = 4
+ MAX_DOWNLOAD_WORKERS = 8
+ 
+ # Initialize components
+-pexels_searcher = None
+-unsplash_searcher = None  # NEW
+-pixabay_searcher = None   # NEW
++google_searcher = None
+ database = None
+ analyzer = None
+ batch_processors = {}
+@@ -95,47 +91,10 @@ def sanitize_filename(text):
+ 
+ 
+ def init_searchers():
+-    """Initialize all image searchers - MODIFIED"""
+-    global pexels_searcher, unsplash_searcher, pixabay_searcher
+-    if pexels_searcher is None:
+-        pexels_searcher = PexelsSearcher(PEXELS_API_KEY)
+-    if unsplash_searcher is None:
+-        unsplash_searcher = UnsplashSearcher(UNSPLASH_ACCESS_KEY)
+-    if pixabay_searcher is None:
+-        pixabay_searcher = PixabaySearcher(PIXABAY_API_KEY)
++    """Initialize Google searcher"""
++    global google_searcher
++    if google_searcher is None:
++        google_searcher = GoogleSearcher(GOOGLE_API_KEY, GOOGLE_CSE_ID)
+ 
+ 
+ def search_all_sources(search_term: str, num_images: int = 30):
+-    """Search all image sources and combine results - MODIFIED"""
++    """Search Google for images"""
+     init_searchers()
+-    
+-    # 40% Unsplash, 35% Pixabay, 25% Pexels
+-    unsplash_count = int(num_images * 0.40)
+-    pixabay_count = int(num_images * 0.35)
+-    pexels_count = num_images - unsplash_count - pixabay_count
+-    
+-    all_images = []
+-    
+-    print(f"🔍 Searching across sources: Unsplash({unsplash_count}) + Pixabay({pixabay_count}) + Pexels({pexels_count})")
+-    
+-    # Unsplash
+-    unsplash_results = unsplash_searcher.search_images(search_term, num_images=unsplash_count)
+-    all_images.extend(unsplash_results)
+-    
+-    # Pixabay
+-    pixabay_results = pixabay_searcher.search_images(search_term, num_images=pixabay_count)
+-    all_images.extend(pixabay_results)
+-    
+-    # Pexels
+-    pexels_results = pexels_searcher.search_images(search_term, num_images=pexels_count)
+-    all_images.extend(pexels_results)
+-    
+-    print(f"✓ Retrieved {len(all_images)} total images")
+-    
+-    return all_images
+-
+-
+-def download_image_from_source(img_data):
+-    """Download image based on source - MODIFIED"""
+-    source = img_data.get('source', 'pexels')
+-    
+-    if source == 'unsplash':
+-        return unsplash_searcher.download_image(img_data['url'])
+-    elif source == 'pixabay':
+-        return pixabay_searcher.download_image(img_data['url'])
+-    else:  # pexels
+-        return pexels_searcher.download_image(img_data['url'])
++    return google_searcher.search_images(search_term, num_images)
+ 
+ 
+ def download_images_parallel(image_results, max_workers=MAX_DOWNLOAD_WORKERS):
+@@ -148,7 +107,7 @@ def download_images_parallel(image_results, max_workers=MAX_DOWNLOAD_WORKERS):
+     
+     with ThreadPoolExecutor(max_workers=max_workers) as executor:
+         future_to_img = {
+-            executor.submit(download_image_from_source, img_data): img_data
++            executor.submit(google_searcher.download_image, img_data['url']): img_data
+             for img_data in image_results
+         }
+         
+@@ -159,7 +118,7 @@ def download_images_parallel(image_results, max_workers=MAX_DOWNLOAD_WORKERS):
+                 if image_bytes:
+                     downloads.append((img_data, image_bytes))
+             except Exception as e:
+-                print(f"    ✗ Download failed for {img_data['id']}: {e}")
++                print(f"    ✗ Download failed: {e}")
+     
+     return downloads
+ 
+ 
+ def init_app():
+-    """Initialize application components including AI models at startup - MODIFIED"""
+-    global pexels_searcher, unsplash_searcher, pixabay_searcher, database, analyzer
++    """Initialize application components including AI models at startup"""
++    global google_searcher, database, analyzer
+     
+     os.makedirs(app.config['CACHE_DIR'], exist_ok=True)
+     os.makedirs(app.config['IMAGES_DIR'], exist_ok=True)
+@@ -181,7 +140,7 @@ def init_app():
+     analyzer = RoundnessAnalyzer(use_local_models=use_local)
+     print("✓ Models loaded and ready\n")
+     
+-    print("✓ Application initialized with multi-source search")
++    print("✓ Application initialized with Google search")
+ 
+ 
+ @app.route('/')
+@@ -199,8 +158,8 @@ def search():
+     if not search_term:
+         return render_template('index.html', error="Please enter a search term")
+     
+-    if not pexels_searcher:
++    if not google_searcher:
+         return render_template('index.html', 
+-                             error="Pexels API key not configured.")
++                             error="Google API not configured.")
+     
+     try:
+diff --git a/templates/index.html b/templates/index.html
+index abc123d..def456g 100644
+--- a/templates/index.html
++++ b/templates/index.html
+@@ -48,10 +48,9 @@
+                             <div id="autocompleteDropdown" class="autocomplete-dropdown"></div>
+                         </div>
+                         <select name="num_images" class="image-count-select">
+-                            <option value="2">2 images</option>
+-                            <option value="5">5 images</option>
++                            <option value="10">10 images</option>
+                             <option value="20">20 images</option>
+                             <option value="30" selected>30 images</option>
+                         </select>
+                         <button type="submit" class="search-button">Search</button>
+                     </div>

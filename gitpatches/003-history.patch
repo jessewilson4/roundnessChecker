@@ -1,0 +1,30 @@
+diff --git a/app.py b/app.py
+index abc123d..def456g 100644
+--- a/app.py
++++ b/app.py
+@@ -476,8 +476,22 @@ def load_search(search_id):
+ @app.route('/history')
+ def history():
+     """View search history"""
+-    searches = database.get_all_searches()
+-    return render_template('history.html', searches=searches)
++    searches = database.get_search_history()
++    batches = database.get_all_batches()
++
++    for search in searches:
++        composite_pct = search['avg_composite']
++        search['roundness_score'] = get_roundness_score(composite_pct)
++        desc, color = get_score_description(search['roundness_score'])
++        search['score_description'] = desc
++        search['score_color'] = color
++        search['batch_name'] = None
++        if search.get('batch_id'):
++            batch = next((b for b in batches if b['id'] == search['batch_id']), None)
++            if batch:
++                search['batch_name'] = batch['name']
++
++    return render_template('history.html', history=searches, batches=batches)
+ 
+ 
+ @app.route('/load_search/<int:search_id>')
+ 

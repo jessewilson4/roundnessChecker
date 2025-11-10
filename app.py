@@ -27,9 +27,7 @@ import gc
 import torch
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils import (
-    PexelsSearcher,
-    UnsplashSearcher,  # NEW
-    PixabaySearcher,   # NEW
+    GoogleSearcher,
     compress_thumbnail,
     Database,
     remove_outliers
@@ -89,6 +87,8 @@ app.config['IMAGES_DIR'] = './cache/images'
 PEXELS_API_KEY = "RHgT85Bjti2XozygivPv3JnQ9ZDp0ivX6wUjEalkjbqtGXgqH4pU6dOo"
 UNSPLASH_ACCESS_KEY = "6ABQPlA4CSpGyuOdd8rdJHqiKQqP0cH58E9pf3nuACc"  # NEW
 PIXABAY_API_KEY = "52936735-d4c77f8b0486c2ea7d1ad2c1a"  # NEW
+GOOGLE_API_KEY = "AIzaSyCaJNp5o4gS4V8TmKrAyc0YZkcaUSg3w8w"
+GOOGLE_CSE_ID = "27af1a123dd994e88"
 
 # Configuration for parallel processing
 BATCH_SIZE = 4
@@ -476,8 +476,22 @@ def search():
 @app.route('/history')
 def history():
     """View search history"""
-    searches = database.get_all_searches()
-    return render_template('history.html', searches=searches)
+    searches = database.get_search_history()
+    batches = database.get_all_batches()
+
+    for search in searches:
+        composite_pct = search['avg_composite']
+        search['roundness_score'] = get_roundness_score(composite_pct)
+        desc, color = get_score_description(search['roundness_score'])
+        search['score_description'] = desc
+        search['score_color'] = color
+        search['batch_name'] = None
+        if search.get('batch_id'):
+            batch = next((b for b in batches if b['id'] == search['batch_id']), None)
+            if batch:
+                search['batch_name'] = batch['name']
+
+    return render_template('history.html', history=searches, batches=batches)
 
 
 @app.route('/load_search/<int:search_id>')

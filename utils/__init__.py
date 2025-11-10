@@ -1,15 +1,8 @@
 """
-# AI_PSEUDOCODE:
-# @file: utils/__init__.py
-# @purpose: package initialization + exports
-# 
-# MODIFIED: @date 2025-11-02
-# CHANGE: add @unsplash_searcher + @pixabay_searcher exports
+Utilities for Image Roundness Analyzer
 """
 
-from .pexels_search import PexelsSearcher
-from .unsplash_search import UnsplashSearcher  # NEW
-from .pixabay_search import PixabaySearcher    # NEW
+from .google_search import GoogleSearcher
 from .edge_detection import (
     analyze_image_roundness,
     RoundnessAnalyzer,
@@ -20,9 +13,7 @@ from .edge_detection import (
 from .database import Database
 
 __all__ = [
-    'PexelsSearcher',
-    'UnsplashSearcher',    # NEW
-    'PixabaySearcher',     # NEW
+    'GoogleSearcher',
     'analyze_image_roundness',
     'RoundnessAnalyzer',
     'remove_outliers',
