@@ -50,3 +50,4 @@ Thumbs.db
 sam_vit_b_01ec64.pth
 groundingdino_swint_ogc.pth
 exports/
+keys.py

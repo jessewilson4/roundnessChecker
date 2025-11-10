@@ -1,21 +1,33 @@
-"""
-# AI_PSEUDOCODE:
-# @file: app.py
-# @purpose: Flask web server + image roundness analysis
-# @routes: [/, /search, /history, /batch, /load_search, /delete_result, /api/autocomplete]
-# 
-# MODIFIED: @date 2025-11-02
-# CHANGE_01: multi-source API integration (Unsplash 40%, Pixabay 35%, Pexels 25%)
-# CHANGE_02: import new searcher classes
-# CHANGE_03: add API keys for Unsplash + Pixabay
-# CHANGE_04: modify search_all_sources() for weighted distribution
-# CHANGE_05: modify download_image_from_source() for multi-source support
-# CHANGE_06: modify init_app() to initialize all searchers
-#
-# FLOW: @search_term → search_all_sources() → download_parallel() → analyze_batch() → filter_outliers() → cache → render
-"""
+'''
+# === UAIPCS START ===
+file: app.py
+purpose: Flask web application for image roundness analysis using Google Custom Search API with OWL-ViT object detection and SAM segmentation, includes batch processing and comprehensive export functionality
+deps: [@flask:framework, @google_custom_search_api:service/external, @sqlite:storage, @transformers:library, @segment_anything:library, @torch:library, @opencv:library, @pandas:library, @numpy:library]
+funcs:
+  - get_roundness_score(composite_percentage:float) -> int  # no_side_effect
+  - get_score_description(score:int) -> tuple  # no_side_effect
+  - sanitize_filename(text:str) -> str  # no_side_effect
+  - cleanup_memory() -> None  # side_effect: garbage collection and GPU cache clear
+  - init_searchers() -> None  # side_effect: initializes global google_searcher
+  - search_all_sources(search_term:str, num_images:int) -> list  # side_effect: API calls
+  - download_images_parallel(image_results:list, max_workers:int) -> list  # side_effect: network I/O
+  - init_app() -> None  # side_effect: initializes globals, loads AI models, creates directories
+  - calculate_statistics(results:list, outliers:list) -> dict  # no_side_effect
+  - prepare_chart_data(results:list) -> dict  # no_side_effect
+refs:
+  - utils/google_search.py::GoogleSearcher
+  - utils/database.py::Database
+  - utils/edge_detection.py::RoundnessAnalyzer
+  - utils/edge_detection.py::analyze_images_batch
+  - templates/index.html
+  - templates/results.html
+  - templates/history.html
+  - templates/batch.html
+notes: perf=cold=3-5s|hot=<1s, persist=durable, concur=not_thread_safe, volatiledeps=[@google_api], memory=high_during_batch
+# === UAIPCS END ===
+'''
 
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, Response
 import os
 import numpy as np
 from datetime import datetime
@@ -26,6 +38,8 @@ from werkzeug.utils import secure_filename
 import gc
 import torch
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import csv
+from io import StringIO
 from utils import (
     GoogleSearcher,
     compress_thumbnail,
@@ -62,7 +76,7 @@ def get_score_description(score):
         score: Integer from 1-50
         
     Returns:
-        Tuple of (description, color)
+        Tuple of (description, color_class)
     """
     if score >= 48:
         return ('Nearly Perfect Circle', '#10b981')
@@ -83,28 +97,22 @@ app.config['SECRET_KEY'] = 'your-secret-key-here-change-in-production'
 app.config['CACHE_DIR'] = './cache'
 app.config['IMAGES_DIR'] = './cache/images'
 
-# API Keys
-PEXELS_API_KEY = "RHgT85Bjti2XozygivPv3JnQ9ZDp0ivX6wUjEalkjbqtGXgqH4pU6dOo"
-UNSPLASH_ACCESS_KEY = "6ABQPlA4CSpGyuOdd8rdJHqiKQqP0cH58E9pf3nuACc"  # NEW
-PIXABAY_API_KEY = "52936735-d4c77f8b0486c2ea7d1ad2c1a"  # NEW
+# Google API Keys
 GOOGLE_API_KEY = "AIzaSyCaJNp5o4gS4V8TmKrAyc0YZkcaUSg3w8w"
-GOOGLE_CSE_ID = "27af1a123dd994e88"
+GOOGLE_CSE_ID = "018409522456625749151:7mwyuw1w4bq"
 
-# Configuration for parallel processing
 BATCH_SIZE = 4
 MAX_DOWNLOAD_WORKERS = 8
 
 # Initialize components
-pexels_searcher = None
-unsplash_searcher = None  # NEW
-pixabay_searcher = None   # NEW
+google_searcher = None
 database = None
 analyzer = None
 batch_processors = {}
 
 
 def cleanup_memory():
-    """Force garbage collection and clear GPU cache."""
+    """Force garbage collection and clear CUDA cache"""
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -119,56 +127,16 @@ def sanitize_filename(text):
 
 
 def init_searchers():
-    """Initialize all image searchers - MODIFIED"""
-    global pexels_searcher, unsplash_searcher, pixabay_searcher
-    if pexels_searcher is None:
-        pexels_searcher = PexelsSearcher(PEXELS_API_KEY)
-    if unsplash_searcher is None:
-        unsplash_searcher = UnsplashSearcher(UNSPLASH_ACCESS_KEY)
-    if pixabay_searcher is None:
-        pixabay_searcher = PixabaySearcher(PIXABAY_API_KEY)
+    """Initialize Google searcher"""
+    global google_searcher
+    if google_searcher is None:
+        google_searcher = GoogleSearcher(GOOGLE_API_KEY, GOOGLE_CSE_ID)
 
 
 def search_all_sources(search_term: str, num_images: int = 30):
-    """Search all image sources and combine results - MODIFIED"""
+    """Search Google for images with negative keywords for isolated objects"""
     init_searchers()
-    
-    # 40% Unsplash, 35% Pixabay, 25% Pexels
-    unsplash_count = int(num_images * 0.40)
-    pixabay_count = int(num_images * 0.35)
-    pexels_count = num_images - unsplash_count - pixabay_count
-    
-    all_images = []
-    
-    print(f"🔍 Searching across sources: Unsplash({unsplash_count}) + Pixabay({pixabay_count}) + Pexels({pexels_count})")
-    
-    # Unsplash
-    unsplash_results = unsplash_searcher.search_images(search_term, num_images=unsplash_count)
-    all_images.extend(unsplash_results)
-    
-    # Pixabay
-    pixabay_results = pixabay_searcher.search_images(search_term, num_images=pixabay_count)
-    all_images.extend(pixabay_results)
-    
-    # Pexels
-    pexels_results = pexels_searcher.search_images(search_term, num_images=pexels_count)
-    all_images.extend(pexels_results)
-    
-    print(f"✓ Retrieved {len(all_images)} total images")
-    
-    return all_images
-
-
-def download_image_from_source(img_data):
-    """Download image based on source - MODIFIED"""
-    source = img_data.get('source', 'pexels')
-    
-    if source == 'unsplash':
-        return unsplash_searcher.download_image(img_data['url'])
-    elif source == 'pixabay':
-        return pixabay_searcher.download_image(img_data['url'])
-    else:  # pexels
-        return pexels_searcher.download_image(img_data['url'])
+    return google_searcher.search_images(search_term, num_images)
 
 
 def download_images_parallel(image_results, max_workers=MAX_DOWNLOAD_WORKERS):
@@ -186,7 +154,7 @@ def download_images_parallel(image_results, max_workers=MAX_DOWNLOAD_WORKERS):
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_img = {
-            executor.submit(download_image_from_source, img_data): img_data
+            executor.submit(google_searcher.download_image, img_data['url']): img_data
             for img_data in image_results
         }
         
@@ -197,419 +165,9 @@ def download_images_parallel(image_results, max_workers=MAX_DOWNLOAD_WORKERS):
                 if image_bytes:
                     downloads.append((img_data, image_bytes))
             except Exception as e:
-                print(f"    ✗ Download failed for {img_data['id']}: {e}")
+                print(f"    ✗ Download failed: {e}")
     
     return downloads
-
-
-def init_app():
-    """Initialize application components including AI models at startup - MODIFIED"""
-    global pexels_searcher, unsplash_searcher, pixabay_searcher, database, analyzer
-    
-    os.makedirs(app.config['CACHE_DIR'], exist_ok=True)
-    os.makedirs(app.config['IMAGES_DIR'], exist_ok=True)
-    
-    # Initialize all searchers
-    init_searchers()
-    
-    database = Database()
-    
-    print("\n🤖 Loading AI models at startup...")
-    use_local = os.path.exists("./models/owlvit-base-patch32")
-    analyzer = RoundnessAnalyzer(use_local_models=use_local)
-    print("✓ Models loaded and ready\n")
-    
-    print("✓ Application initialized with multi-source search")
-
-
-@app.route('/')
-def index():
-    """Main search page"""
-    return render_template('index.html')
-
-
-@app.route('/search', methods=['POST'])
-def search():
-    """
-    Process search request with parallel downloads and batch inference.
-    OPTIMIZED: 40-50% faster than sequential version.
-    """
-    search_term = request.form.get('search_term', '').strip()
-    num_images_requested = int(request.form.get('num_images', 30))
-    
-    if not search_term:
-        return render_template('index.html', error="Please enter a search term")
-    
-    if not pexels_searcher:
-        return render_template('index.html', 
-                             error="Pexels API key not configured.")
-    
-    try:
-        print(f"\n{'='*80}")
-        print(f" OPTIMIZED SEARCH: '{search_term}' ({num_images_requested} images)")
-        print(f"{'='*80}")
-        
-        num_to_fetch = num_images_requested * 2
-        num_to_process = int(num_images_requested * 1.25)
-        
-        print(f"📥 Fetching {num_to_fetch} images")
-        
-        # Search for images (MODIFIED: multi-source)
-        image_results = search_all_sources(search_term, num_images=num_to_fetch)
-        
-        if not image_results:
-            return render_template('index.html',
-                                 error=f"No images found for '{search_term}'.")
-        
-        image_results = image_results[:num_to_process]
-        
-        print(f"⚡ Downloading {len(image_results)} images in parallel...")
-        
-        # OPTIMIZED: Parallel downloads
-        start_time = time.time()
-        downloads = download_images_parallel(image_results)
-        download_time = time.time() - start_time
-        
-        print(f"✓ Downloaded {len(downloads)} images in {download_time:.1f}s")
-        
-        if not downloads:
-            return render_template('index.html',
-                                 error=f"Could not download images for '{search_term}'.")
-        
-        # OPTIMIZED: Batch processing
-        print(f"⚡ Analyzing images in batches of {BATCH_SIZE}...")
-        results = []
-        
-        # Process in batches
-        for batch_start in range(0, len(downloads), BATCH_SIZE):
-            batch_end = min(batch_start + BATCH_SIZE, len(downloads))
-            batch = downloads[batch_start:batch_end]
-            
-            print(f"\n   Batch {batch_start//BATCH_SIZE + 1}: Processing {len(batch)} images")
-            
-            # Extract data
-            batch_img_data = [item[0] for item in batch]
-            batch_img_bytes = [item[1] for item in batch]
-            
-            # Batch analyze
-            analyses = analyze_images_batch(batch_img_bytes, search_term, analyzer)
-            
-            # Process results
-            for img_data, image_bytes, analysis in zip(batch_img_data, batch_img_bytes, analyses):
-                if not analysis:
-                    continue
-                
-                # Save files
-                thumbnail = compress_thumbnail(image_bytes, max_size_kb=25)
-                safe_search_term = sanitize_filename(search_term)
-                thumbnail_filename = f"{safe_search_term}_{img_data['id']}_thumb.jpg"
-                thumbnail_path = os.path.join(app.config['IMAGES_DIR'], thumbnail_filename)
-                
-                with open(thumbnail_path, 'wb') as f:
-                    f.write(thumbnail)
-                
-                # Save viz images
-                viz_paths = {}
-                for viz_type, viz_bytes in analysis['visualizations'].items():
-                    viz_filename = f"{safe_search_term}_{img_data['id']}_{viz_type}.jpg"
-                    viz_path = os.path.join(app.config['IMAGES_DIR'], viz_filename)
-                    with open(viz_path, 'wb') as f:
-                        f.write(viz_bytes)
-                    viz_paths[viz_type] = viz_filename
-                
-                # Calculate scores
-                composite_pct = analysis['composite'] * 100
-                roundness_score = get_roundness_score(composite_pct)
-                score_desc, score_color = get_score_description(roundness_score)
-                
-                results.append({
-                    'image_id': img_data['id'],
-                    'pexels_id': img_data['id'],
-                    'url': img_data['url'],
-                    'photographer': img_data['photographer'],
-                    'photographer_url': img_data['photographer_url'],
-                    'source': img_data.get('source', 'pexels'),
-                    'thumbnail_path': thumbnail_filename,
-                    'viz_paths': viz_paths,
-                    'circularity': analysis['circularity'],
-                    'aspect_ratio': analysis['aspect_ratio'],
-                    'eccentricity': analysis['eccentricity'],
-                    'solidity': analysis['solidity'],
-                    'convexity': analysis['convexity'],
-                    'composite': analysis['composite'],
-                    'roundness_score': roundness_score,
-                    'score_description': score_desc,
-                    'score_color': score_color,
-                    'area': analysis['area'],
-                    'perimeter': analysis.get('perimeter', 0)
-                })
-                
-                if len(results) >= num_images_requested:
-                    break
-            
-            # Cleanup after batch
-            cleanup_memory()
-            
-            if len(results) >= num_images_requested:
-                break
-        
-        if not results:
-            return render_template('index.html',
-                                 error=f"Could not analyze images for '{search_term}'.")
-        
-        # Sort and rank
-        results.sort(key=lambda x: x['composite'], reverse=True)
-        for i, result in enumerate(results, 1):
-            result['rank'] = i
-        
-        # Remove outliers
-        filtered_results, outliers = remove_outliers(results, metric='composite')
-        
-        # Calculate statistics
-        stats = calculate_statistics(filtered_results, outliers)
-        
-        # Calculate scores
-        avg_composite_pct = stats['composite']['mean']
-        average_roundness_score = get_roundness_score(avg_composite_pct)
-        average_score_description, average_score_color = get_score_description(average_roundness_score)
-        
-        # Prepare chart data
-        chart_data = prepare_chart_data(filtered_results)
-        
-        # Clean for database
-        results_for_db = []
-        for r in filtered_results:
-            clean_result = {
-                'pexels_id': r.get('pexels_id'),
-                'image_id': r.get('image_id'),
-                'url': r.get('url'),
-                'photographer': r.get('photographer'),
-                'photographer_url': r.get('photographer_url'),
-                'source': r.get('source', 'pexels'),
-                'thumbnail_path': r.get('thumbnail_path'),
-                'viz_paths': r.get('viz_paths'),
-                'circularity': float(r['circularity']),
-                'aspect_ratio': float(r['aspect_ratio']),
-                'eccentricity': float(r['eccentricity']),
-                'solidity': float(r['solidity']),
-                'convexity': float(r['convexity']),
-                'composite': float(r['composite']),
-                'roundness_score': r.get('roundness_score'),
-                'score_description': r.get('score_description'),
-                'score_color': r.get('score_color'),
-                'area': float(r['area']),
-                'perimeter': float(r.get('perimeter', 0)),
-                'rank': r['rank']
-            }
-            results_for_db.append(clean_result)
-        
-        outliers_for_db = []
-        for o in outliers:
-            clean_outlier = {
-                'pexels_id': o.get('pexels_id'),
-                'url': o.get('url'),
-                'photographer': o.get('photographer'),
-                'photographer_url': o.get('photographer_url'),
-                'thumbnail_path': o.get('thumbnail_path'),
-                'viz_paths': o.get('viz_paths'),
-                'circularity': float(o['circularity']),
-                'aspect_ratio': float(o['aspect_ratio']),
-                'eccentricity': float(o['eccentricity']),
-                'solidity': float(o['solidity']),
-                'convexity': float(o['convexity']),
-                'composite': float(o['composite']),
-                'area': float(o['area']),
-                'perimeter': float(o.get('perimeter', 0)),
-                'outlier_reason': o.get('outlier_reason'),
-                'outlier_direction': o.get('outlier_direction')
-            }
-            outliers_for_db.append(clean_outlier)
-        
-        # Save to database
-        search_id = database.save_search(
-            search_term, 
-            results_for_db,
-            results_for_db,
-            outliers_for_db, 
-            stats
-        )
-        
-        print(f"\n✓ Analysis complete!")
-        print(f"  Valid results: {len(filtered_results)}")
-        print(f"  Average composite: {stats['composite']['mean']:.1f}%")
-        
-        # Final cleanup
-        cleanup_memory()
-        
-        # Clean for template
-        clean_results_for_template = [
-            {k: v for k, v in r.items() if k not in ['method1', 'method2']} 
-            for r in results_for_db[:10]
-        ]
-        
-        clean_all_results = [
-            {k: v for k, v in r.items() if k not in ['method1', 'method2']} 
-            for r in results_for_db
-        ]
-        
-        return render_template('results.html',
-                             search_term=search_term,
-                             num_images=num_images_requested,
-                             results=clean_results_for_template,
-                             all_results=clean_all_results,
-                             outliers=outliers_for_db,
-                             stats=stats,
-                             average_roundness_score=average_roundness_score,
-                             average_score_description=average_score_description,
-                             average_score_color=average_score_color,
-                             chart_data=chart_data,
-                             timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                             search_id=search_id)
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return render_template('index.html',
-                             error=f"Error processing search: {str(e)}")
-
-
-@app.route('/history')
-def history():
-    """View search history"""
-    searches = database.get_search_history()
-    batches = database.get_all_batches()
-
-    for search in searches:
-        composite_pct = search['avg_composite']
-        search['roundness_score'] = get_roundness_score(composite_pct)
-        desc, color = get_score_description(search['roundness_score'])
-        search['score_description'] = desc
-        search['score_color'] = color
-        search['batch_name'] = None
-        if search.get('batch_id'):
-            batch = next((b for b in batches if b['id'] == search['batch_id']), None)
-            if batch:
-                search['batch_name'] = batch['name']
-
-    return render_template('history.html', history=searches, batches=batches)
-
-
-@app.route('/load_search/<int:search_id>')
-def load_search(search_id):
-    """Load a previous search from cache"""
-    search_data = database.load_search_by_id(search_id)
-    
-    if not search_data:
-        return render_template('index.html',
-                             error="Search not found in cache.")
-    
-    chart_data = prepare_chart_data(search_data['filtered_results'])
-    
-    return render_template('results.html',
-                         search_term=search_data['search_term'],
-                         search_id=search_id,
-                         results=search_data['filtered_results'][:10],
-                         all_results=search_data['filtered_results'],
-                         outliers=search_data['outliers'],
-                         stats=search_data['stats'],
-                         chart_data=chart_data,
-                         timestamp=search_data['timestamp'],
-                         from_cache=True)
-
-
-@app.route('/delete_result', methods=['POST'])
-def delete_result():
-    """Delete a specific result from a search"""
-    try:
-        search_id = request.form.get('search_id')
-        pexels_id = request.form.get('pexels_id')
-        
-        if not search_id or not pexels_id:
-            return jsonify({'success': False, 'error': 'Missing parameters'})
-        
-        search_data = database.load_search_by_id(search_id)
-        if not search_data:
-            return jsonify({'success': False, 'error': 'Search not found'})
-        
-        result_to_delete = None
-        all_results = search_data['filtered_results'] + search_data.get('outliers', [])
-        
-        for result in all_results:
-            if str(result.get('pexels_id')) == str(pexels_id):
-                result_to_delete = result
-                break
-        
-        if not result_to_delete:
-            return jsonify({'success': False, 'error': 'Result not found'})
-        
-        # Delete files
-        if result_to_delete.get('thumbnail_path'):
-            thumb_path = os.path.join(app.config['IMAGES_DIR'], result_to_delete['thumbnail_path'])
-            if os.path.exists(thumb_path):
-                os.remove(thumb_path)
-        
-        if result_to_delete.get('viz_paths'):
-            for viz_file in result_to_delete['viz_paths'].values():
-                viz_path = os.path.join(app.config['IMAGES_DIR'], viz_file)
-                if os.path.exists(viz_path):
-                    os.remove(viz_path)
-        
-        updated_results = [r for r in all_results if str(r.get('pexels_id')) != str(pexels_id)]
-        
-        filtered_results, outliers = remove_outliers(updated_results, metric='composite')
-        
-        filtered_results.sort(key=lambda x: x['composite'], reverse=True)
-        for i, result in enumerate(filtered_results, 1):
-            result['rank'] = i
-        
-        stats = calculate_statistics(filtered_results, outliers)
-        
-        database.update_search(search_id, filtered_results, outliers, stats)
-        
-        return jsonify({
-            'success': True,
-            'new_stats': stats,
-            'remaining_count': len(filtered_results)
-        })
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)})
-
-
-@app.route('/api/autocomplete')
-def autocomplete():
-    """Get previous searches for autocomplete"""
-    try:
-        query = request.args.get('q', '').lower()
-        previous = database.get_all_searches()
-        
-        suggestions = []
-        for search in previous:
-            if query in search['search_term'].lower():
-                suggestions.append({
-                    'id': search['id'],
-                    'term': search['search_term'],
-                    'timestamp': search['timestamp'],
-                    'avg_circularity': search['avg_circularity'],
-                    'avg_composite': search['avg_composite'],
-                    'num_images': search['num_images']
-                })
-        
-        return jsonify({'suggestions': suggestions})
-        
-    except Exception as e:
-        return jsonify({'suggestions': [], 'error': str(e)})
-
-
-@app.route('/image/<filename>')
-def serve_image(filename):
-    """Serve cached image"""
-    image_path = os.path.join(app.config['IMAGES_DIR'], filename)
-    if os.path.exists(image_path):
-        return send_file(image_path, mimetype='image/jpeg')
-    return "Image not found", 404
 
 
 def calculate_statistics(results, outliers):
@@ -692,13 +250,297 @@ def prepare_chart_data(results):
     }
 
 
+def init_app():
+    """Initialize application components including AI models at startup"""
+    global google_searcher, database, analyzer
+    
+    os.makedirs(app.config['CACHE_DIR'], exist_ok=True)
+    os.makedirs(app.config['IMAGES_DIR'], exist_ok=True)
+    
+    # Initialize Google searcher
+    init_searchers()
+    
+    database = Database()
+    
+    print("\n🤖 Loading AI models at startup...")
+    use_local = os.path.exists("./models/owlvit-base-patch32")
+    analyzer = RoundnessAnalyzer(use_local_models=use_local)
+    print("✓ Models loaded and ready\n")
+    
+    print("✓ Application initialized with Google Custom Search")
+
+
+@app.route('/')
+def index():
+    """Main search page"""
+    return render_template('index.html')
+
+
+@app.route('/search', methods=['POST'])
+def search():
+    """
+    Process search request with parallel downloads and batch inference.
+    OPTIMIZED: 40-50% faster than sequential version.
+    """
+    search_term = request.form.get('search_term', '').strip()
+    num_images_requested = int(request.form.get('num_images', 30))
+    
+    if not search_term:
+        return render_template('index.html', error="Please enter a search term")
+    
+    if not google_searcher:
+        return render_template('index.html', 
+                             error="Google API not configured.")
+    
+    try:
+        print(f"\n{'='*80}")
+        print(f" OPTIMIZED SEARCH: '{search_term}' ({num_images_requested} images)")
+        print(f"{'='*80}")
+        
+        num_to_fetch = num_images_requested * 2
+        num_to_process = int(num_images_requested * 1.25)
+        
+        print(f"📥 Fetching {num_to_fetch} images from Google")
+        
+        # Search for images
+        image_results = search_all_sources(search_term, num_images=num_to_fetch)
+        
+        if not image_results:
+            return render_template('index.html',
+                                 error=f"No images found for '{search_term}'.")
+        
+        # Download in parallel
+        print(f"\n⬇️  Downloading {len(image_results)} images in parallel...")
+        downloads = download_images_parallel(image_results)
+        
+        if not downloads:
+            return render_template('index.html',
+                                 error=f"Failed to download any images for '{search_term}'.")
+        
+        print(f"✓ Successfully downloaded {len(downloads)} images")
+        
+        # Limit processing count
+        if len(downloads) > num_to_process:
+            downloads = downloads[:num_to_process]
+            print(f"📊 Processing top {num_to_process} downloaded images")
+        
+        # Process in batches
+        print(f"\n🔬 Analyzing {len(downloads)} images in batches of {BATCH_SIZE}...")
+        
+        results = analyze_images_batch(
+            downloads,
+            search_term,
+            analyzer,
+            batch_size=BATCH_SIZE
+        )
+        
+        if not results:
+            cleanup_memory()
+            return render_template('index.html',
+                                 error=f"No objects detected in images for '{search_term}'.")
+        
+        print(f"✓ Got {len(results)} successful detections")
+        
+        # Add scores and rankings
+        for result in results:
+            composite_pct = result['composite'] * 100
+            result['roundness_score'] = get_roundness_score(composite_pct)
+            desc, color = get_score_description(result['roundness_score'])
+            result['score_description'] = desc
+            result['score_color'] = color
+        
+        # Filter outliers
+        print("\n📈 Filtering statistical outliers...")
+        filtered_results, outliers = remove_outliers(results, metric='composite')
+        print(f"✓ Kept {len(filtered_results)} results, removed {len(outliers)} outliers")
+        
+        # Sort and rank
+        filtered_results.sort(key=lambda x: x['composite'], reverse=True)
+        for i, result in enumerate(filtered_results, 1):
+            result['rank'] = i
+        
+        # Limit final results
+        final_results = filtered_results[:num_images_requested]
+        
+        # Calculate statistics
+        stats = calculate_statistics(filtered_results, outliers)
+        chart_data = prepare_chart_data(filtered_results)
+        
+        # Calculate average score
+        if final_results:
+            avg_composite = stats['composite']['mean']
+            avg_score = get_roundness_score(avg_composite)
+            avg_description, avg_color = get_score_description(avg_score)
+        else:
+            avg_score = 0
+            avg_description = "N/A"
+            avg_color = "#000000"
+        
+        # Cache results
+        search_id = database.save_search(
+            search_term=search_term,
+            results=results,
+            filtered_results=filtered_results,
+            outliers=outliers,
+            stats=stats
+        )
+        
+        cleanup_memory()
+        
+        print(f"✓ Search complete! Showing {len(final_results)} results\n")
+        
+        return render_template('results.html',
+                             search_term=search_term,
+                             num_images=num_images_requested,
+                             results=final_results[:10],
+                             all_results=filtered_results,
+                             outliers=outliers,
+                             stats=stats,
+                             average_roundness_score=avg_score,
+                             average_score_description=avg_description,
+                             average_score_color=avg_color,
+                             chart_data=chart_data,
+                             timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                             search_id=search_id)
+    
+    except Exception as e:
+        print(f"\n✗ Search failed: {e}")
+        import traceback
+        traceback.print_exc()
+        cleanup_memory()
+        return render_template('index.html',
+                             error=f"Search failed: {str(e)}")
+
+
+@app.route('/history')
+def history():
+    """Display search history"""
+    searches = database.get_search_history()
+    batches = database.get_all_batches()
+    
+    for search in searches:
+        composite_pct = search['avg_composite']
+        search['roundness_score'] = get_roundness_score(composite_pct)
+        desc, color = get_score_description(search['roundness_score'])
+        search['score_description'] = desc
+        search['score_color'] = color
+        search['batch_name'] = None
+        if search.get('batch_id'):
+            batch = next((b for b in batches if b['id'] == search['batch_id']), None)
+            if batch:
+                search['batch_name'] = batch['name']
+    
+    return render_template('history.html', history=searches, batches=batches)
+
+
+@app.route('/load_search/<int:search_id>')
+def load_search(search_id):
+    """Load cached search results"""
+    search_data = database.load_search_by_id(search_id)
+    
+    if not search_data:
+        return render_template('index.html', error="Search not found")
+    
+    # Calculate stats
+    filtered_results = search_data['filtered_results']
+    outliers = search_data['outliers']
+    
+    stats = calculate_statistics(filtered_results, outliers)
+    chart_data = prepare_chart_data(filtered_results)
+    
+    # Calculate average score
+    if filtered_results:
+        avg_composite = stats['composite']['mean']
+        avg_score = get_roundness_score(avg_composite)
+        avg_description, avg_color = get_score_description(avg_score)
+    else:
+        avg_score = 0
+        avg_description = "N/A"
+        avg_color = "#000000"
+    
+    return render_template('results.html',
+                         search_term=search_data['search_term'],
+                         num_images=search_data['num_images'],
+                         results=filtered_results[:10],
+                         all_results=filtered_results,
+                         outliers=outliers,
+                         stats=stats,
+                         average_roundness_score=avg_score,
+                         average_score_description=avg_description,
+                         average_score_color=avg_color,
+                         chart_data=chart_data,
+                         timestamp=search_data['timestamp'],
+                         search_id=search_id)
+
+
+@app.route('/delete_result/<int:search_id>', methods=['POST'])
+def delete_result(search_id):
+    """Delete a search result"""
+    success = database.delete_search(search_id)
+    return jsonify({'success': success})
+
+
+@app.route('/delete_searches', methods=['POST'])
+def delete_searches():
+    """Delete multiple searches by ID"""
+    try:
+        data = request.get_json()
+        search_ids = data.get('search_ids', [])
+        
+        if not search_ids:
+            return jsonify({'success': False, 'error': 'No search IDs provided'})
+        
+        deleted_count = database.delete_searches(search_ids)
+        
+        return jsonify({'success': True, 'deleted_count': deleted_count})
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/autocomplete')
+def autocomplete():
+    """
+    Autocomplete endpoint for search suggestions.
+    Uses cached keywords from database.
+    """
+    query = request.args.get('q', '').lower().strip()
+    
+    if not query or len(query) < 2:
+        return jsonify([])
+    
+    # Get previous searches from database
+    searches = database.get_search_history(limit=100)
+    keywords = [s['search_term'] for s in searches]
+    
+    # Filter matches
+    matches = [k for k in keywords if query in k.lower()]
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_matches = []
+    for m in matches:
+        if m not in seen:
+            seen.add(m)
+            unique_matches.append(m)
+    
+    return jsonify(unique_matches[:10])
+
+
+@app.route('/image/<filename>')
+def serve_image(filename):
+    """Serve cached image"""
+    image_path = os.path.join(app.config['IMAGES_DIR'], filename)
+    if os.path.exists(image_path):
+        return send_file(image_path, mimetype='image/jpeg')
+    return "Image not found", 404
+
+
 @app.route('/export/history.csv')
 def export_history_csv():
     """Export search history summary as CSV"""
-    import csv
-    from io import StringIO
-    from flask import Response
-    
     history_data = database.get_search_history(limit=1000)
     
     output = StringIO()
@@ -737,10 +579,6 @@ def export_history_csv():
 @app.route('/export/search/<int:search_id>.csv')
 def export_search_csv(search_id):
     """Export individual search results as CSV"""
-    import csv
-    from io import StringIO
-    from flask import Response
-    
     search_data = database.load_search_by_id(search_id)
     
     if not search_data:
@@ -750,7 +588,7 @@ def export_search_csv(search_id):
     writer = csv.writer(output)
     
     writer.writerow([
-        'Rank', 'Image ID', 'Photographer', 'Source', 'Roundness Score (1-50)',
+        'Rank', 'Image ID', 'Source', 'Roundness Score (1-50)',
         'Score Description', 'Composite (%)', 'Circularity (%)', 'Aspect Ratio (%)',
         'Eccentricity (%)', 'Solidity (%)', 'Convexity (%)', 'Area (px²)', 'Perimeter (px)'
     ])
@@ -761,8 +599,8 @@ def export_search_csv(search_id):
         score_desc, _ = get_score_description(roundness_score)
         
         writer.writerow([
-            result['rank'], result.get('pexels_id', ''), result.get('photographer', ''),
-            result.get('source', 'pexels'), roundness_score, score_desc,
+            result['rank'], result.get('image_id', ''), result.get('source', 'google'),
+            roundness_score, score_desc,
             f"{result['composite'] * 100:.1f}", f"{result['circularity'] * 100:.1f}",
             f"{result['aspect_ratio'] * 100:.1f}", f"{result['eccentricity'] * 100:.1f}",
             f"{result['solidity'] * 100:.1f}", f"{result['convexity'] * 100:.1f}",
@@ -776,26 +614,6 @@ def export_search_csv(search_id):
         mimetype='text/csv',
         headers={'Content-Disposition': f'attachment; filename={filename}'}
     )
-
-
-@app.route('/delete_searches', methods=['POST'])
-def delete_searches():
-    """Delete multiple searches by ID"""
-    try:
-        data = request.get_json()
-        search_ids = data.get('search_ids', [])
-        
-        if not search_ids:
-            return jsonify({'success': False, 'error': 'No search IDs provided'})
-        
-        deleted_count = database.delete_searches(search_ids)
-        
-        return jsonify({'success': True, 'deleted_count': deleted_count})
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)})
 
 
 # ============= BATCH PROCESSING =============
@@ -895,131 +713,96 @@ def batch_start(batch_id):
             return jsonify({'success': False, 'error': 'Batch already processing'})
         
         processor = {
+            'batch_id': batch_id,
+            'is_running': True,
             'is_paused': False,
             'is_stopped': False,
             'thread': None
         }
         
         def process_batch():
-            """Background batch processing"""
+            global analyzer, database
+            
             keywords = batch['keywords']
             images_per = batch['images_per_keyword']
-            
-            database.update_batch_status(batch_id, 'processing')
-            
             completed = batch['completed_keywords']
-            start_index = batch['current_keyword_index']
+            start_idx = batch['current_keyword_index']
             
-            for idx in range(start_index, len(keywords)):
+            for idx in range(start_idx, len(keywords)):
+                if processor['is_stopped']:
+                    break
+                
                 while processor['is_paused'] and not processor['is_stopped']:
                     time.sleep(1)
                 
                 if processor['is_stopped']:
-                    database.update_batch_status(batch_id, 'stopped', idx, completed)
                     break
                 
                 keyword = keywords[idx]
-                print(f"\nBatch processing: '{keyword}' ({idx+1}/{len(keywords)})")
                 
                 try:
-                    init_searchers()
+                    print(f"\n[Batch {batch_id}] Processing {idx+1}/{len(keywords)}: {keyword}")
+                    
+                    # Search
                     image_results = search_all_sources(keyword, num_images=images_per * 2)
                     
                     if not image_results:
+                        print(f"  ✗ No images found for '{keyword}'")
                         completed += 1
                         database.update_batch_status(batch_id, 'processing', idx + 1, completed)
                         continue
                     
-                    image_results = image_results[:int(images_per * 1.25)]
-                    
+                    # Download
                     downloads = download_images_parallel(image_results)
                     
                     if not downloads:
+                        print(f"  ✗ Failed to download images for '{keyword}'")
                         completed += 1
                         database.update_batch_status(batch_id, 'processing', idx + 1, completed)
                         continue
                     
-                    results = []
+                    # Analyze
+                    results = analyze_images_batch(
+                        downloads[:int(images_per * 1.25)],
+                        keyword,
+                        analyzer,
+                        batch_size=BATCH_SIZE
+                    )
                     
-                    for batch_start in range(0, len(downloads), BATCH_SIZE):
-                        batch_end = min(batch_start + BATCH_SIZE, len(downloads))
-                        batch_data = downloads[batch_start:batch_end]
-                        
-                        batch_img_data = [item[0] for item in batch_data]
-                        batch_img_bytes = [item[1] for item in batch_data]
-                        
-                        analyses = analyze_images_batch(batch_img_bytes, keyword, analyzer)
-                        
-                        for img_data, image_bytes, analysis in zip(batch_img_data, batch_img_bytes, analyses):
-                            if not analysis:
-                                continue
-                            
-                            thumbnail = compress_thumbnail(image_bytes, max_size_kb=25)
-                            safe_keyword = sanitize_filename(keyword)
-                            thumbnail_filename = f"{safe_keyword}_{img_data['id']}_thumb.jpg"
-                            thumbnail_path = os.path.join(app.config['IMAGES_DIR'], thumbnail_filename)
-                            
-                            with open(thumbnail_path, 'wb') as f:
-                                f.write(thumbnail)
-                            
-                            viz_paths = {}
-                            for viz_type, viz_bytes in analysis['visualizations'].items():
-                                viz_filename = f"{safe_keyword}_{img_data['id']}_{viz_type}.jpg"
-                                viz_path = os.path.join(app.config['IMAGES_DIR'], viz_filename)
-                                with open(viz_path, 'wb') as f:
-                                    f.write(viz_bytes)
-                                viz_paths[viz_type] = viz_filename
-                            
-                            composite_pct = analysis['composite'] * 100
-                            roundness_score = get_roundness_score(composite_pct)
-                            score_desc, score_color = get_score_description(roundness_score)
-                            
-                            results.append({
-                                'image_id': img_data['id'],
-                                'pexels_id': img_data['id'],
-                                'url': img_data['url'],
-                                'photographer': img_data['photographer'],
-                                'photographer_url': img_data['photographer_url'],
-                                'source': img_data.get('source', 'pexels'),
-                                'thumbnail_path': thumbnail_filename,
-                                'viz_paths': viz_paths,
-                                'circularity': analysis['circularity'],
-                                'aspect_ratio': analysis['aspect_ratio'],
-                                'eccentricity': analysis['eccentricity'],
-                                'solidity': analysis['solidity'],
-                                'convexity': analysis['convexity'],
-                                'composite': analysis['composite'],
-                                'roundness_score': roundness_score,
-                                'score_description': score_desc,
-                                'score_color': score_color,
-                                'area': analysis['area'],
-                                'perimeter': analysis.get('perimeter', 0)
-                            })
-                            
-                            if len(results) >= images_per:
-                                break
-                        
-                        cleanup_memory()
-                        
-                        if len(results) >= images_per:
-                            break
+                    if not results:
+                        print(f"  ✗ No objects detected for '{keyword}'")
+                        completed += 1
+                        database.update_batch_status(batch_id, 'processing', idx + 1, completed)
+                        continue
                     
-                    if results:
-                        results.sort(key=lambda x: x['composite'], reverse=True)
-                        for i, result in enumerate(results, 1):
+                    # Add scores
+                    for result in results:
+                        composite_pct = result['composite'] * 100
+                        result['roundness_score'] = get_roundness_score(composite_pct)
+                        desc, color = get_score_description(result['roundness_score'])
+                        result['score_description'] = desc
+                        result['score_color'] = color
+                    
+                    # Filter and save
+                    filtered, outliers_list = remove_outliers(results, metric='composite')
+                    
+                    if filtered:
+                        filtered.sort(key=lambda x: x['composite'], reverse=True)
+                        for i, result in enumerate(filtered, 1):
                             result['rank'] = i
                         
-                        filtered_results, outliers = remove_outliers(results, metric='composite')
-                        stats = calculate_statistics(filtered_results, outliers)
+                        stats = calculate_statistics(filtered, outliers_list)
                         
                         database.save_search(
                             search_term=keyword,
                             results=results,
-                            filtered_results=filtered_results,
-                            outliers=outliers,
+                            filtered_results=filtered[:images_per],
+                            outliers=outliers_list,
                             stats=stats,
                             batch_id=batch_id
                         )
+                        
+                        print(f"  ✓ Saved {len(filtered[:images_per])} results")
                     
                     completed += 1
                     database.update_batch_status(batch_id, 'processing', idx + 1, completed)
@@ -1028,7 +811,9 @@ def batch_start(batch_id):
                     time.sleep(2)
                     
                 except Exception as e:
-                    print(f"Error processing {keyword}: {str(e)}")
+                    print(f"  ✗ Error processing '{keyword}': {e}")
+                    import traceback
+                    traceback.print_exc()
                     completed += 1
                     database.update_batch_status(batch_id, 'processing', idx + 1, completed)
                     cleanup_memory()
@@ -1174,10 +959,6 @@ def delete_batch(batch_id):
 @app.route('/batch/<int:batch_id>/export.csv')
 def batch_export(batch_id):
     """Export batch results"""
-    import csv
-    from io import StringIO
-    from flask import Response
-    
     batch = database.get_batch(batch_id)
     if not batch:
         return "Batch not found", 404

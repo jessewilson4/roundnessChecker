@@ -1,26 +1,18 @@
-"""
-# AI_PSEUDOCODE:
-# @file: utils/google_search.py
-# @purpose: Google Custom Search API image searcher w/ negative keywords
-# 
-# FLOW: search(@term, @count) → GET w/ excludeTerms → parse JSON → RETURN [@img_urls]
-# 
-# FEATURES:
-#   - negative keywords (excludeTerms)
-#   - imgSize filter (medium+)
-#   - 10 results per call
-#   - aspect ratio filter
-# 
-# API: https://www.googleapis.com/customsearch/v1
-# PARAMS:
-#   key → API_KEY
-#   cx → SEARCH_ENGINE_ID
-#   q → search_term
-#   searchType=image
-#   imgSize=medium|large|xlarge
-#   excludeTerms="hand hands person people"
-#   num=10
-"""
+'''
+# === UAIPCS START ===
+file: utils/google_search.py
+purpose: Google Custom Search API client for image search with negative keyword filtering to find isolated, whole objects (~1024px), with detailed logging for troubleshooting
+deps: [@requests:library, @typing:library, @time:library]
+funcs:
+  - search_images(search_term:str, num_images:int=10) -> list  # side_effect: API calls, rate limiting, single-page troubleshooting
+  - _single_search(search_term:str, start_index:int=1) -> list  # side_effect: API call, logs API results and filtered results
+  - download_image(url:str, fallback_url:str=None) -> bytes  # side_effect: network I/O
+classes:
+  - GoogleSearcher  # manages API client with negative keywords filtering and size/aspect filtering
+refs:
+notes: api=https://www.googleapis.com/customsearch/v1, ratelimit=500ms_between_calls, excludes=hand|hands|person|people|face|closeup|texture|pattern|background, imgsize=large, min_width=1024, maxresults=10_per_call, single_page_logging=True
+# === UAIPCS END ===
+'''
 
 import requests
 from typing import List, Dict, Optional
@@ -28,73 +20,39 @@ import time
 
 
 class GoogleSearcher:
-    """Google Custom Search API image searcher"""
+    """Google Custom Search API image searcher for ~1024px images with negative keyword filtering and detailed logging"""
     
     def __init__(self, api_key: str, search_engine_id: str):
-        """
-        Initialize Google Custom Search API client.
-        
-        Args:
-            api_key: Google API key
-            search_engine_id: Custom Search Engine ID (cx)
-        """
         self.api_key = api_key
         self.search_engine_id = search_engine_id
         self.base_url = "https://www.googleapis.com/customsearch/v1"
-        
-        # Negative keywords to filter out
         self.exclude_terms = "hand hands person people face closeup close-up texture pattern background"
-        
-    def search_images(self, search_term: str, num_images: int = 10) -> List[Dict]:
-        """
-        Search for images using Google Custom Search API.
-        
-        Args:
-            search_term: Object to search for
-            num_images: Number of images (must be multiple of 10: 10, 20, 30)
-            
-        Returns:
-            List of image dicts with url, width, height, thumbnail
-        """
-        if num_images % 10 != 0:
-            raise ValueError("num_images must be multiple of 10 (10, 20, 30)")
-        
-        all_results = []
-        num_calls = num_images // 10
-        
-        for i in range(num_calls):
-            start_index = (i * 10) + 1
-            results = self._single_search(search_term, start_index)
-            all_results.extend(results)
-            
-            # Rate limiting
-            if i < num_calls - 1:
-                time.sleep(0.5)
-        
-        return all_results[:num_images]
     
-    def _single_search(self, search_term: str, start_index: int = 1) -> List[Dict]:
-        """
-        Perform single API call (returns 10 results).
+    def search_images(self, search_term: str, num_images: int = 10) -> List[Dict]:
+        """Search for images and return filtered list (~1024px, correct aspect ratio) with logging (single page)"""
+        if num_images != 10:
+            print("⚠️ For troubleshooting, only 10 items are fetched per call.")
+            num_images = 10
         
-        Args:
-            search_term: Search query
-            start_index: Starting result index (1-based)
-            
-        Returns:
-            List of image result dicts
-        """
+        print(f"📥 Fetching {num_images} images for search term: '{search_term}'")
+        
+        api_results, filtered_results = self._single_search(search_term)
+        
+        print(f"✅ Total images returned after filtering: {len(filtered_results)}\n")
+        return filtered_results
+    
+    def _single_search(self, search_term: str, start_index: int = 1) -> (List[Dict], List[Dict]):
+        """Perform a single API call with detailed logging for troubleshooting purposes"""
         params = {
             'key': self.api_key,
             'cx': self.search_engine_id,
             'q': search_term,
             'searchType': 'image',
-            'imgSize': 'medium',  # medium, large, xlarge
+            'imgSize': 'large',
             'num': 10,
             'start': start_index,
             'excludeTerms': self.exclude_terms,
-            'safe': 'active',
-            'fileType': 'jpg,png'
+            'safe': 'active'
         }
         
         try:
@@ -102,35 +60,64 @@ class GoogleSearcher:
             response.raise_for_status()
             data = response.json()
             
-            results = []
-            for item in data.get('items', []):
-                # Extract image info
+            api_results = data.get('items', [])
+            filtered_results = []
+            
+            for item in api_results:
                 image_data = item.get('image', {})
+                width = image_data.get('width', 0)
+                height = image_data.get('height', 0)
                 
-                result = {
-                    'url': item.get('link'),
-                    'thumbnail_url': image_data.get('thumbnailLink'),
-                    'width': image_data.get('width', 0),
-                    'height': image_data.get('height', 0),
-                    'thumbnail_width': image_data.get('thumbnailWidth', 0),
-                    'thumbnail_height': image_data.get('thumbnailHeight', 0),
-                    'title': item.get('title', ''),
-                    'source': 'google',
-                    'context_url': image_data.get('contextLink', ''),
-                    'mime': item.get('mime', '')
-                }
+                print(f"  🔹 Image: {item.get('link')}")
+                print(f"    width={width}, height={height}")
+                print(f"    thumbnail={image_data.get('thumbnailLink')}")
+                print(f"    context={image_data.get('contextLink')}")
                 
-                # Filter by aspect ratio (avoid extreme panoramas)
-                if result['width'] > 0 and result['height'] > 0:
-                    aspect_ratio = result['width'] / result['height']
+                if width >= 1024:
+                    aspect_ratio = width / height if height > 0 else 0
                     if 0.5 <= aspect_ratio <= 2.0:
-                        results.append(result)
+                        filtered_results.append({
+                            'url': item.get('link'),
+                            'thumbnail_url': image_data.get('thumbnailLink'),
+                            'width': width,
+                            'height': height,
+                            'thumbnail_width': image_data.get('thumbnailWidth', 0),
+                            'thumbnail_height': image_data.get('thumbnailHeight', 0),
+                            'title': item.get('title', ''),
+                            'source': 'google',
+                            'context_url': image_data.get('contextLink', ''),
+                            'mime': item.get('mime', ''),
+                            'image_id': f"google_{item.get('link', '')[-20:]}"
+                        })
+                else:
+                    print("    ❌ Skipped (width < 1024)")
             
-            return results
-            
+            print(f"  🔹 {len(filtered_results)} items passed filtering\n")
+            return api_results, filtered_results
+        
         except requests.exceptions.RequestException as e:
             print(f"Google API error: {e}")
-            return []
+            return [], []
         except Exception as e:
             print(f"Unexpected error: {e}")
-            return []
+            return [], []
+    
+    def download_image(self, url: str, fallback_url: str = None) -> Optional[bytes]:
+        """Download image from URL with browser-like headers to reduce 403 errors"""
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
+            'Referer': 'https://www.google.com/'
+        }
+        urls_to_try = [url]
+        if fallback_url:
+            urls_to_try.append(fallback_url)
+        
+        for u in urls_to_try:
+            try:
+                resp = requests.get(u, headers=headers, timeout=15)
+                resp.raise_for_status()
+                return resp.content
+            except Exception as e:
+                print(f"  ✗ Failed to download image from {u}: {e}")
+        
+        return None
