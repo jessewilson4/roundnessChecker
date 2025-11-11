@@ -1,0 +1,250 @@
+{
+  "kind": "customsearch#search",
+  "url": {
+    "type": "application/json",
+    "template": "https://www.googleapis.com/customsearch/v1?q={searchTerms}&num={count?}&start={startIndex?}&lr={language?}&safe={safe?}&cx={cx?}&sort={sort?}&filter={filter?}&gl={gl?}&cr={cr?}&googlehost={googleHost?}&c2coff={disableCnTwTranslation?}&hq={hq?}&hl={hl?}&siteSearch={siteSearch?}&siteSearchFilter={siteSearchFilter?}&exactTerms={exactTerms?}&excludeTerms={excludeTerms?}&linkSite={linkSite?}&orTerms={orTerms?}&dateRestrict={dateRestrict?}&lowRange={lowRange?}&highRange={highRange?}&searchType={searchType}&fileType={fileType?}&rights={rights?}&imgSize={imgSize?}&imgType={imgType?}&imgColorType={imgColorType?}&imgDominantColor={imgDominantColor?}&alt=json"
+  },
+  "queries": {
+    "request": [
+      {
+        "title": "Google Custom Search - isolated dog",
+        "totalResults": "128000000",
+        "searchTerms": "isolated dog",
+        "count": 10,
+        "startIndex": 1,
+        "inputEncoding": "utf8",
+        "outputEncoding": "utf8",
+        "safe": "active",
+        "cx": "018409522456625749151:7mwyuw1w4bq",
+        "searchType": "image",
+        "imgSize": "xxlarge"
+      }
+    ],
+    "nextPage": [
+      {
+        "title": "Google Custom Search - isolated dog",
+        "totalResults": "128000000",
+        "searchTerms": "isolated dog",
+        "count": 10,
+        "startIndex": 11,
+        "inputEncoding": "utf8",
+        "outputEncoding": "utf8",
+        "safe": "active",
+        "cx": "018409522456625749151:7mwyuw1w4bq",
+        "searchType": "image",
+        "imgSize": "xxlarge"
+      }
+    ]
+  },
+  "context": {
+    "title": "PHAI Search Engine"
+  },
+  "searchInformation": {
+    "searchTime": 0.237997,
+    "formattedSearchTime": "0.24",
+    "totalResults": "128000000",
+    "formattedTotalResults": "128,000,000"
+  },
+  "items": [
+    {
+      "kind": "customsearch#result",
+      "title": "Happy dog jumping, isolated background. Generative AI Stock ...",
+      "htmlTitle": "Happy <b>dog</b> jumping, <b>isolated</b> background. Generative AI Stock ...",
+      "link": "https://as1.ftcdn.net/jpg/05/88/49/92/1000_F_588499228_mv6LmhAdS6yKgvK7tTTU9Hj3X5LTz6y5.jpg",
+      "displayLink": "stock.adobe.com",
+      "snippet": "Happy dog jumping, isolated background. Generative AI Stock ...",
+      "htmlSnippet": "Happy <b>dog</b> jumping, <b>isolated</b> background. Generative AI Stock ...",
+      "mime": "image/jpeg",
+      "fileFormat": "image/jpeg",
+      "image": {
+        "contextLink": "https://stock.adobe.com/images/happy-dog-jumping-isolated-background-generative-ai/588499228",
+        "height": 1000,
+        "width": 1000,
+        "byteSize": 201989,
+        "thumbnailLink": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQxOhfOaiS-W6TZsj7Bl97hmPrty8_rHZqcw2KB_PWAULGsBcSQYLnZg-k&s",
+        "thumbnailHeight": 149,
+        "thumbnailWidth": 149
+      }
+    },
+    {
+      "kind": "customsearch#result",
+      "title": "Anthracite Isolated Dog House - M: 100x70x70 cm - DT Dog House",
+      "htmlTitle": "Anthracite <b>Isolated Dog</b> House - M: 100x70x70 cm - DT <b>Dog</b> House",
+      "link": "https://dtdoghouse.com/wp-content/uploads/2025/02/black-anracit-hiska.jpg",
+      "displayLink": "dtdoghouse.com",
+      "snippet": "Anthracite Isolated Dog House - M: 100x70x70 cm - DT Dog House",
+      "htmlSnippet": "Anthracite <b>Isolated Dog</b> House - M: 100x70x70 cm - DT <b>Dog</b> House",
+      "mime": "image/jpeg",
+      "fileFormat": "image/jpeg",
+      "image": {
+        "contextLink": "https://dtdoghouse.com/product/anthracite-isolated-dog-house-m/",
+        "height": 1000,
+        "width": 900,
+        "byteSize": 502372,
+        "thumbnailLink": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTju4vUTKpo2kv_yzOTHtl2rwFJSxzsR3YQ51y-uzp_uh4eRDvgoeS0iSM&s",
+        "thumbnailHeight": 149,
+        "thumbnailWidth": 134
+      }
+    },
+    {
+      "kind": "customsearch#result",
+      "title": "Happy dog joyfully running with excitement in a bright, cheerful ...",
+      "htmlTitle": "Happy <b>dog</b> joyfully running with excitement in a bright, cheerful ...",
+      "link": "https://static.vecteezy.com/system/resources/previews/055/237/844/non_2x/happy-dog-joyfully-running-with-excitement-in-a-bright-cheerful-environment-isolated-on-transparent-background-free-png.png",
+      "displayLink": "www.vecteezy.com",
+      "snippet": "Happy dog joyfully running with excitement in a bright, cheerful ...",
+      "htmlSnippet": "Happy <b>dog</b> joyfully running with excitement in a bright, cheerful ...",
+      "mime": "image/png",
+      "fileFormat": "image/png",
+      "image": {
+        "contextLink": "https://www.vecteezy.com/png/55237844-happy-dog-joyfully-running-with-excitement-in-a-bright-cheerful-environment-isolated-on-transparent-background",
+        "height": 980,
+        "width": 980,
+        "byteSize": 940730,
+        "thumbnailLink": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRXRplBea8iLliwDtMQf1z7tKqG8BNQ7jY62EO-Y38QPJx49ChlZe6zh0Y&s",
+        "thumbnailHeight": 149,
+        "thumbnailWidth": 149
+      }
+    },
+    {
+      "kind": "customsearch#result",
+      "title": "Goldendoodle Clipart Cartoon Golden Retriever Pup Cartoon Dog ...",
+      "htmlTitle": "Goldendoodle Clipart Cartoon Golden Retriever Pup Cartoon <b>Dog</b> ...",
+      "link": "https://png.pngtree.com/png-clipart/20230913/original/pngtree-goldendoodle-clipart-cartoon-golden-retriever-pup-cartoon-dog-isolated-isolated-vector-png-image_11066362.png",
+      "displayLink": "pngtree.com",
+      "snippet": "Goldendoodle Clipart Cartoon Golden Retriever Pup Cartoon Dog ...",
+      "htmlSnippet": "Goldendoodle Clipart Cartoon Golden Retriever Pup Cartoon <b>Dog</b> ...",
+      "mime": "image/png",
+      "fileFormat": "image/png",
+      "image": {
+        "contextLink": "https://pngtree.com/freepng/goldendoodle-clipart-cartoon-golden-retriever-pup-cartoon-dog-isolated-isolated-vector_11066362.html",
+        "height": 1200,
+        "width": 1200,
+        "byteSize": 394979,
+        "thumbnailLink": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTX6G3gTlTO_4uAYGRKhinqUB9rWey9jFm-hkZMpyjqzuOFKthC6jHzUAc&s",
+        "thumbnailHeight": 150,
+        "thumbnailWidth": 150
+      }
+    },
+    {
+      "kind": "customsearch#result",
+      "title": "Isolated dog jumping on transparent background 48051326 PNG",
+      "htmlTitle": "<b>Isolated dog</b> jumping on transparent background 48051326 PNG",
+      "link": "https://static.vecteezy.com/system/resources/previews/048/051/326/non_2x/isolated-dog-jumping-on-transparent-background-free-png.png",
+      "displayLink": "www.vecteezy.com",
+      "snippet": "Isolated dog jumping on transparent background 48051326 PNG",
+      "htmlSnippet": "<b>Isolated dog</b> jumping on transparent background 48051326 PNG",
+      "mime": "image/png",
+      "fileFormat": "image/png",
+      "image": {
+        "contextLink": "https://www.vecteezy.com/png/48051326-isolated-dog-jumping-on-transparent-background",
+        "height": 980,
+        "width": 980,
+        "byteSize": 725749,
+        "thumbnailLink": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTIFKWiT3dpDhmqdn4d6EHaGAoFfzH6eRZPw9UBmBXYSbOyQSrCoFc9K3EO&s",
+        "thumbnailHeight": 149,
+        "thumbnailWidth": 149
+      }
+    },
+    {
+      "kind": "customsearch#result",
+      "title": "Cartoon dog isolated on white background Stock Vector | Adobe Stock",
+      "htmlTitle": "Cartoon <b>dog isolated</b> on white background Stock Vector | Adobe Stock",
+      "link": "https://as2.ftcdn.net/jpg/01/98/92/59/1000_F_198925980_6JQ3q2w0AusgsfSE45rrs1SVy2OvnKxj.jpg",
+      "displayLink": "stock.adobe.com",
+      "snippet": "Cartoon dog isolated on white background Stock Vector | Adobe Stock",
+      "htmlSnippet": "Cartoon <b>dog isolated</b> on white background Stock Vector | Adobe Stock",
+      "mime": "image/jpeg",
+      "fileFormat": "image/jpeg",
+      "image": {
+        "contextLink": "https://stock.adobe.com/images/cartoon-dog-isolated-on-white-background/198925980",
+        "height": 1000,
+        "width": 950,
+        "byteSize": 167532,
+        "thumbnailLink": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQZ-lNm3ipuSR-hZ4Lk9UPuQ-3jYUbp-QgDha8ZOVWBFsIzlf_MaLBknLk&s",
+        "thumbnailHeight": 149,
+        "thumbnailWidth": 142
+      }
+    },
+    {
+      "kind": "customsearch#result",
+      "title": "Golden Dog Shape Award Trophy Isolated at Transparent Background ...",
+      "htmlTitle": "Golden <b>Dog</b> Shape Award Trophy <b>Isolated</b> at Transparent Background ...",
+      "link": "https://static.vecteezy.com/system/resources/previews/065/985/072/non_2x/golden-dog-shape-award-trophy-isolated-at-transparent-background-png.png",
+      "displayLink": "www.vecteezy.com",
+      "snippet": "Golden Dog Shape Award Trophy Isolated at Transparent Background ...",
+      "htmlSnippet": "Golden <b>Dog</b> Shape Award Trophy <b>Isolated</b> at Transparent Background ...",
+      "mime": "image/png",
+      "fileFormat": "image/png",
+      "image": {
+        "contextLink": "https://www.vecteezy.com/png/65985072-golden-dog-shape-award-trophy-isolated-at-transparent-background",
+        "height": 980,
+        "width": 980,
+        "byteSize": 841606,
+        "thumbnailLink": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSWuDKVs-nX44BfnG6FZv4Ke-1zf27VJ5msV4fMIpxdi5-tLqzwaw3Bb6x-&s",
+        "thumbnailHeight": 149,
+        "thumbnailWidth": 149
+      }
+    },
+    {
+      "kind": "customsearch#result",
+      "title": "Closeup front view face portrait of aggressive barking dog with ...",
+      "htmlTitle": "Closeup front view face portrait of aggressive barking <b>dog</b> with ...",
+      "link": "https://as2.ftcdn.net/jpg/09/08/28/41/1000_F_908284172_l1mXs8ao5ndQ1dxR6BToEY1EidSLd1zd.jpg",
+      "displayLink": "stock.adobe.com",
+      "snippet": "Closeup front view face portrait of aggressive barking dog with ...",
+      "htmlSnippet": "Closeup front view face portrait of aggressive barking <b>dog</b> with ...",
+      "mime": "image/jpeg",
+      "fileFormat": "image/jpeg",
+      "image": {
+        "contextLink": "https://stock.adobe.com/images/closeup-front-view-face-portrait-of-aggressive-barking-dog-with-open-mouth-and-sharp-jaw-teeth-isolated-angry-dangerous-domestic-pet-animal-furious-guard-pitbull-attack-bite-vicious-fear-scary/908284172",
+        "height": 892,
+        "width": 1000,
+        "byteSize": 314668,
+        "thumbnailLink": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRaWHViQDsaxbaZFAyf_IChzN8Rg6egiFr804qhNYZEN-Hkg3Y8LuOAFk0&s",
+        "thumbnailHeight": 133,
+        "thumbnailWidth": 149
+      }
+    },
+    {
+      "kind": "customsearch#result",
+      "title": "Pug dog with Santa Hat illustration, Cute Dog Peeking Face ...",
+      "htmlTitle": "Pug <b>dog</b> with Santa Hat illustration, Cute <b>Dog</b> Peeking Face ...",
+      "link": "https://static.vecteezy.com/system/resources/previews/059/286/610/non_2x/pug-dog-with-santa-hat-illustration-cute-dog-peeking-face-isolated-dog-wearing-santa-hat-art-vector.jpg",
+      "displayLink": "www.vecteezy.com",
+      "snippet": "Pug dog with Santa Hat illustration, Cute Dog Peeking Face ...",
+      "htmlSnippet": "Pug <b>dog</b> with Santa Hat illustration, Cute <b>Dog</b> Peeking Face ...",
+      "mime": "image/jpeg",
+      "fileFormat": "image/jpeg",
+      "image": {
+        "contextLink": "https://www.vecteezy.com/vector-art/59286610-pug-dog-with-santa-hat-illustration-cute-dog-peeking-face-isolated-dog-wearing-santa-hat-art",
+        "height": 980,
+        "width": 980,
+        "byteSize": 66076,
+        "thumbnailLink": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTw-s7gx76_6sFqXNogp56zynZuHZHaHD3O_WNg38Xh7u1HcyN8osksqDCU&s",
+        "thumbnailHeight": 149,
+        "thumbnailWidth": 149
+      }
+    },
+    {
+      "kind": "customsearch#result",
+      "title": "Purebred German Shepherd Dog Isolated Looking Forward Photograph ...",
+      "htmlTitle": "Purebred German Shepherd <b>Dog Isolated</b> Looking Forward Photograph ...",
+      "link": "https://images.fineartamerica.com/images/artworkimages/mediumlarge/3/purebred-german-shepherd-dog-isolated-looking-forward-good-focused.jpg",
+      "displayLink": "fineartamerica.com",
+      "snippet": "Purebred German Shepherd Dog Isolated Looking Forward Photograph ...",
+      "htmlSnippet": "Purebred German Shepherd <b>Dog Isolated</b> Looking Forward Photograph ...",
+      "mime": "image/jpeg",
+      "fileFormat": "image/jpeg",
+      "image": {
+        "contextLink": "https://fineartamerica.com/featured/purebred-german-shepherd-dog-isolated-looking-forward-good-focused.html",
+        "height": 900,
+        "width": 900,
+        "byteSize": 151074,
+        "thumbnailLink": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSXjRqNiOcSsHe0dQQLDfx5d0qXgrpJR-SS4EkSJ4UF6Jdk0QhZvFqo28c7&s",
+        "thumbnailHeight": 146,
+        "thumbnailWidth": 146
+      }
+    }
+  ]
+}

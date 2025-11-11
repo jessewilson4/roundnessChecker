@@ -141,90 +141,16 @@ def search_all_sources(search_term: str, num_images: int = 30):
 
 def download_images_parallel(image_results, max_workers=MAX_DOWNLOAD_WORKERS):
     """
-    Download multiple images in parallel.
+    Download multiple images using GoogleSearcher's batch method with single browser instance
     
     Args:
         image_results: List of image metadata dicts
-        max_workers: Number of parallel download threads
+        max_workers: Unused (kept for compatibility)
         
     Returns:
         List of tuples (img_data, image_bytes)
     """
-    downloads = []
-    
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_img = {
-            executor.submit(google_searcher.download_image, img_data['url']): img_data
-            for img_data in image_results
-        }
-        
-        for future in as_completed(future_to_img):
-            img_data = future_to_img[future]
-            try:
-                image_bytes = future.result()
-                if image_bytes:
-                    downloads.append((img_data, image_bytes))
-            except Exception as e:
-                print(f"    ✗ Download failed: {e}")
-    
-    return downloads
-
-
-def calculate_statistics(results, outliers):
-    """Calculate summary statistics for shape metrics"""
-    if not results:
-        return {}
-    
-    composites = [r['composite'] * 100 for r in results]
-    circularities = [r['circularity'] * 100 for r in results]
-    aspect_ratios = [r['aspect_ratio'] * 100 for r in results]
-    eccentricities = [r['eccentricity'] * 100 for r in results]
-    solidities = [r['solidity'] * 100 for r in results]
-    convexities = [r['convexity'] * 100 for r in results]
-    
-    return {
-        'total_analyzed': len(results) + len(outliers),
-        'total_valid': len(results),
-        'outliers_removed': len(outliers),
-        'composite': {
-            'mean': np.mean(composites),
-            'std': np.std(composites),
-            'min': np.min(composites),
-            'max': np.max(composites),
-            'median': np.median(composites),
-            'values': composites
-        },
-        'circularity': {
-            'mean': np.mean(circularities),
-            'std': np.std(circularities),
-            'median': np.median(circularities),
-            'values': circularities
-        },
-        'aspect_ratio': {
-            'mean': np.mean(aspect_ratios),
-            'std': np.std(aspect_ratios),
-            'median': np.median(aspect_ratios),
-            'values': aspect_ratios
-        },
-        'eccentricity': {
-            'mean': np.mean(eccentricities),
-            'std': np.std(eccentricities),
-            'median': np.median(eccentricities),
-            'values': eccentricities
-        },
-        'solidity': {
-            'mean': np.mean(solidities),
-            'std': np.std(solidities),
-            'median': np.median(solidities),
-            'values': solidities
-        },
-        'convexity': {
-            'mean': np.mean(convexities),
-            'std': np.std(convexities),
-            'median': np.median(convexities),
-            'values': convexities
-        }
-    }
+    return google_searcher.download_images_batch(image_results)
 
 
 def prepare_chart_data(results):
@@ -280,7 +206,7 @@ def index():
 def search():
     """
     Process search request with parallel downloads and batch inference.
-    OPTIMIZED: 40-50% faster than sequential version.
+    TROUBLESHOOTING MODE: Hard limit 10 images to conserve API quota.
     """
     search_term = request.form.get('search_term', '').strip()
     num_images_requested = int(request.form.get('num_images', 30))
@@ -294,13 +220,14 @@ def search():
     
     try:
         print(f"\n{'='*80}")
-        print(f" OPTIMIZED SEARCH: '{search_term}' ({num_images_requested} images)")
+        print(f" TROUBLESHOOTING SEARCH: '{search_term}'")
         print(f"{'='*80}")
         
-        num_to_fetch = num_images_requested * 2
-        num_to_process = int(num_images_requested * 1.25)
+        # TROUBLESHOOTING: Hard limit to 10 to conserve API quota
+        num_to_fetch = 10
+        num_to_process = 10
         
-        print(f"📥 Fetching {num_to_fetch} images from Google")
+        print(f"📥 Fetching {num_to_fetch} images from Google (troubleshooting mode)")
         
         # Search for images
         image_results = search_all_sources(search_term, num_images=num_to_fetch)
@@ -309,20 +236,19 @@ def search():
             return render_template('index.html',
                                  error=f"No images found for '{search_term}'.")
         
+        print(f"\n✓ API returned {len(image_results)} images that passed filtering")
+        
         # Download in parallel
-        print(f"\n⬇️  Downloading {len(image_results)} images in parallel...")
+        print(f"\n⬇️  Downloading {len(image_results)} images with Playwright...")
+        print("="*80)
         downloads = download_images_parallel(image_results)
+        print("="*80)
         
         if not downloads:
             return render_template('index.html',
                                  error=f"Failed to download any images for '{search_term}'.")
         
-        print(f"✓ Successfully downloaded {len(downloads)} images")
-        
-        # Limit processing count
-        if len(downloads) > num_to_process:
-            downloads = downloads[:num_to_process]
-            print(f"📊 Processing top {num_to_process} downloaded images")
+        print(f"\n✅ Successfully downloaded {len(downloads)}/{len(image_results)} images")
         
         # Process in batches
         print(f"\n🔬 Analyzing {len(downloads)} images in batches of {BATCH_SIZE}...")
@@ -330,8 +256,7 @@ def search():
         results = analyze_images_batch(
             downloads,
             search_term,
-            analyzer,
-            batch_size=BATCH_SIZE
+            analyzer
         )
         
         if not results:

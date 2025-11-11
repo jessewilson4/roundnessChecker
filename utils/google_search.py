@@ -1,123 +1,184 @@
 '''
 # === UAIPCS START ===
 file: utils/google_search.py
-purpose: Google Custom Search API client for image search with negative keyword filtering to find isolated, whole objects (~1024px), with detailed logging for troubleshooting
-deps: [@requests:library, @typing:library, @time:library]
+purpose: Google Custom Search API client for image search using xxlarge size parameter, downloads full-size images directly from link field using single reusable Playwright browser instance
+deps: [@requests:library, @typing:library, @time:library, @playwright:library]
 funcs:
-  - search_images(search_term:str, num_images:int=10) -> list  # side_effect: API calls, rate limiting, single-page troubleshooting
-  - _single_search(search_term:str, start_index:int=1) -> list  # side_effect: API call, logs API results and filtered results
-  - download_image(url:str, fallback_url:str=None) -> bytes  # side_effect: network I/O
+  - search_images(search_term:str, num_images:int=10) -> list  # side_effect: API calls, rate limiting
+  - _single_search(search_term:str, start_index:int=1) -> tuple  # side_effect: API call, logs results
+  - download_images_batch(image_results:list, browser:Browser) -> list  # side_effect: network I/O, reuses browser
 classes:
-  - GoogleSearcher  # manages API client with negative keywords filtering and size/aspect filtering
+  - GoogleSearcher  # manages API client and Playwright batch downloads with single browser instance
 refs:
-notes: api=https://www.googleapis.com/customsearch/v1, ratelimit=500ms_between_calls, excludes=hand|hands|person|people|face|closeup|texture|pattern|background, imgsize=large, min_width=1024, maxresults=10_per_call, single_page_logging=True
+notes: api=https://www.googleapis.com/customsearch/v1, ratelimit=500ms_between_calls, imgsize=xxlarge, maxresults=10_per_call, browser=single_reusable_instance, downloads=direct_from_link_field
 # === UAIPCS END ===
 '''
 
 import requests
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import time
+from playwright.sync_api import Browser, sync_playwright
 
 
 class GoogleSearcher:
-    """Google Custom Search API image searcher for ~1024px images with negative keyword filtering and detailed logging"""
+    """Google Custom Search API image searcher - downloads full-size images directly using single browser instance"""
     
     def __init__(self, api_key: str, search_engine_id: str):
         self.api_key = api_key
         self.search_engine_id = search_engine_id
         self.base_url = "https://www.googleapis.com/customsearch/v1"
-        self.exclude_terms = "hand hands person people face closeup close-up texture pattern background"
+        self.last_request_time = 0
+        self.min_request_interval = 0.5  # 500ms between API calls
+        self._browser = None
+        self._playwright = None
+    
+    def _ensure_browser(self):
+        """Lazy initialization of browser - creates on first use"""
+        if self._browser is None:
+            self._playwright = sync_playwright().start()
+            self._browser = self._playwright.chromium.launch(headless=True)
+        return self._browser
+    
+    def close_browser(self):
+        """Close browser instance - call when done with all downloads"""
+        if self._browser:
+            self._browser.close()
+            self._browser = None
+        if self._playwright:
+            self._playwright.stop()
+            self._playwright = None
     
     def search_images(self, search_term: str, num_images: int = 10) -> List[Dict]:
-        """Search for images and return filtered list (~1024px, correct aspect ratio) with logging (single page)"""
-        if num_images != 10:
-            print("⚠️ For troubleshooting, only 10 items are fetched per call.")
-            num_images = 10
+        """Search for images - hard limited to 10 per API call"""
+        num_images = 10  # Google API limit per request
         
-        print(f"📥 Fetching {num_images} images for search term: '{search_term}'")
+        print(f"📥 Fetching up to {num_images} images for: '{search_term}'")
         
         api_results, filtered_results = self._single_search(search_term)
         
-        print(f"✅ Total images returned after filtering: {len(filtered_results)}\n")
+        print(f"✅ {len(filtered_results)} images ready for download\n")
         return filtered_results
     
-    def _single_search(self, search_term: str, start_index: int = 1) -> (List[Dict], List[Dict]):
-        """Perform a single API call with detailed logging for troubleshooting purposes"""
+    def _single_search(self, search_term: str, start_index: int = 1) -> Tuple[List[Dict], List[Dict]]:
+        """Perform single API call - returns all results (no filtering)"""
+        # Rate limiting
+        elapsed = time.time() - self.last_request_time
+        if elapsed < self.min_request_interval:
+            time.sleep(self.min_request_interval - elapsed)
+        
         params = {
             'key': self.api_key,
             'cx': self.search_engine_id,
             'q': search_term,
             'searchType': 'image',
-            'imgSize': 'large',
+            'imgSize': 'xxlarge',  # Largest available
             'num': 10,
             'start': start_index,
-            'excludeTerms': self.exclude_terms,
             'safe': 'active'
         }
         
         try:
             response = requests.get(self.base_url, params=params, timeout=10)
+            self.last_request_time = time.time()
             response.raise_for_status()
             data = response.json()
             
             api_results = data.get('items', [])
             filtered_results = []
             
-            for item in api_results:
+            print(f"\n📊 Google API returned {len(api_results)} results")
+            print("="*80)
+            
+            for idx, item in enumerate(api_results, 1):
                 image_data = item.get('image', {})
                 width = image_data.get('width', 0)
                 height = image_data.get('height', 0)
+                byte_size = image_data.get('byteSize', 0)
                 
-                print(f"  🔹 Image: {item.get('link')}")
-                print(f"    width={width}, height={height}")
-                print(f"    thumbnail={image_data.get('thumbnailLink')}")
-                print(f"    context={image_data.get('contextLink')}")
+                print(f"\n  [{idx}] {item.get('title', 'Untitled')[:50]}")
+                print(f"      URL: {item.get('link')[:70]}...")
+                print(f"      Size: {width}x{height} ({byte_size} bytes)")
+                print(f"      Context: {image_data.get('contextLink', '')[:60]}...")
                 
-                if width >= 1024:
-                    aspect_ratio = width / height if height > 0 else 0
-                    if 0.5 <= aspect_ratio <= 2.0:
-                        filtered_results.append({
-                            'url': item.get('link'),
-                            'thumbnail_url': image_data.get('thumbnailLink'),
-                            'width': width,
-                            'height': height,
-                            'thumbnail_width': image_data.get('thumbnailWidth', 0),
-                            'thumbnail_height': image_data.get('thumbnailHeight', 0),
-                            'title': item.get('title', ''),
-                            'source': 'google',
-                            'context_url': image_data.get('contextLink', ''),
-                            'mime': item.get('mime', ''),
-                            'image_id': f"google_{item.get('link', '')[-20:]}"
-                        })
-                else:
-                    print("    ❌ Skipped (width < 1024)")
+                filtered_results.append({
+                    'url': item.get('link'),  # Direct link to full-size image
+                    'thumbnail_url': image_data.get('thumbnailLink'),
+                    'context_url': image_data.get('contextLink', ''),
+                    'width': width,
+                    'height': height,
+                    'byte_size': byte_size,
+                    'title': item.get('title', ''),
+                    'source': 'google',
+                    'mime': item.get('mime', ''),
+                    'image_id': f"google_{hash(item.get('link', ''))}"
+                })
+                print(f"      ✅ Added to download queue")
             
-            print(f"  🔹 {len(filtered_results)} items passed filtering\n")
+            print("="*80)
+            print(f"\n✅ {len(filtered_results)} images queued\n")
             return api_results, filtered_results
         
         except requests.exceptions.RequestException as e:
-            print(f"Google API error: {e}")
+            print(f"❌ Google API error: {e}")
             return [], []
         except Exception as e:
-            print(f"Unexpected error: {e}")
+            print(f"❌ Unexpected error: {e}")
             return [], []
     
-    def download_image(self, url: str, fallback_url: str = None) -> Optional[bytes]:
-        """Download image from URL with browser-like headers to reduce 403 errors"""
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
-            'Referer': 'https://www.google.com/'
-        }
-        urls_to_try = [url]
-        if fallback_url:
-            urls_to_try.append(fallback_url)
+    def download_images_batch(self, image_results: List[Dict]) -> List[Tuple[Dict, bytes]]:
+        """
+        Download multiple images using single browser instance
         
-        for u in urls_to_try:
+        Args:
+            image_results: List of image metadata dicts with 'url' field
+            
+        Returns:
+            List of tuples (img_data, image_bytes)
+        """
+        if not image_results:
+            return []
+        
+        browser = self._ensure_browser()
+        context = browser.new_context(
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0',
+            viewport={'width': 1920, 'height': 1080},
+            ignore_https_errors=True
+        )
+        page = context.new_page()
+        
+        downloads = []
+        
+        print(f"⬇️  Downloading {len(image_results)} images...")
+        print("="*80)
+        
+        for img_data in image_results:
+            url = img_data['url']
+            print(f"\n  🌐 {url[:70]}...")
+            
             try:
-                resp = requests.get(u, headers=headers, timeout=15)
-                resp.raise_for_status()
-                return resp.content
+                response = page.goto(url, wait_until='load', timeout=15000)
+                
+                if response and response.status == 200:
+                    content_type = response.headers.get('content-type', '').lower()
+                    
+                    if 'image' in content_type:
+                        image_bytes = response.body()
+                        size_kb = len(image_bytes) // 1024
+                        print(f"      ✅ Downloaded {size_kb}KB")
+                        downloads.append((img_data, image_bytes))
+                    else:
+                        print(f"      ❌ Not an image: {content_type}")
+                else:
+                    status = response.status if response else "No response"
+                    print(f"      ❌ Status {status}")
+                    
             except Exception as e:
-                print(f"  ✗ Failed to download image from {u}: {e}")
+                print(f"      ❌ Error: {str(e)[:60]}")
+            
+            time.sleep(0.3)  # Rate limiting between downloads
         
-        return None
+        context.close()
+        print("="*80)
+        print(f"\n✅ Downloaded {len(downloads)}/{len(image_results)} images\n")
+        
+        return downloads
