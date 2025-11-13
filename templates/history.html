@@ -256,7 +256,7 @@
                 if (!confirm(confirmMsg)) return;
                 
                 try {
-                    const response = await fetch('/delete_searches', {
+                    const response = await fetch('/delete', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'

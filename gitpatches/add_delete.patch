@@ -1,0 +1,99 @@
+diff --git a/app.py b/app.py
+index abc1234..def5678 100644
+--- a/app.py
++++ b/app.py
+@@ -478,12 +478,13 @@ def search():
+ @app.route('/history')
+ def history():
+     """Search history page"""
+     history_data = database.get_search_history(limit=50)
++    batches = database.get_all_batches()
+     
+     # Add roundness scores
+     for search in history_data:
+         search['roundness_score'] = get_roundness_score(search['avg_composite'])
+         search['score_description'], search['score_color'] = get_score_description(search['roundness_score'])
+     
+-    return render_template('history.html', history=history_data)
++    return render_template('history.html', history=history_data, batches=batches)
+ 
+ 
+ @app.route('/load/<int:search_id>')
+@@ -879,6 +880,28 @@ def admin_reset():
+     except Exception as e:
+         return jsonify({'success': False, 'error': str(e)})
+ 
++
++@app.route('/admin/delete_all', methods=['POST'])
++def admin_delete_all():
++    """Delete all searches and batches"""
++    try:
++        # Get all searches
++        all_searches = database.get_search_history(limit=10000)
++        search_ids = [s['id'] for s in all_searches]
++        
++        # Get all batches
++        all_batches = database.get_all_batches()
++        batch_ids = [b['id'] for b in all_batches]
++        
++        # Delete searches
++        if search_ids:
++            database.delete_searches(search_ids)
++        
++        # Delete batches
++        for batch_id in batch_ids:
++            database.delete_batch(batch_id)
++        
++        return jsonify({'success': True, 'deleted_searches': len(search_ids), 'deleted_batches': len(batch_ids)})
++    except Exception as e:
++        return jsonify({'success': False, 'error': str(e)})
+ 
+ if __name__ == '__main__':
+     init_app()
+diff --git a/templates/admin.html b/templates/admin.html
+index abc1234..def5678 100644
+--- a/templates/admin.html
++++ b/templates/admin.html
+@@ -145,6 +145,7 @@
+             <div class="action-buttons">
+                 <button class="btn-save" onclick="saveSettings()">💾 Save All Settings</button>
+                 <button class="btn-reset" onclick="resetToDefaults()">🔄 Reset to Defaults</button>
++                <button class="btn-danger" onclick="deleteAllData()" style="margin-left: 10px;">🗑️ Delete All Data</button>
+             </div>
+         </main>
+     </div>
+@@ -242,6 +243,29 @@
+                 alert('Error resetting settings: ' + result.error);
+             }
+         }
++        
++        async function deleteAllData() {
++            const confirmed = confirm(
++                '⚠️ WARNING: This will permanently delete ALL searches and batches.\n\n' +
++                'This action cannot be undone.\n\n' +
++                'Are you absolutely sure you want to continue?'
++            );
++            
++            if (!confirmed) return;
++            
++            try {
++                const response = await fetch('/admin/delete_all', {
++                    method: 'POST',
++                    headers: {'Content-Type': 'application/json'}
++                });
++                
++                const result = await response.json();
++                
++                if (result.success) {
++                    alert(`✓ Deleted ${result.deleted_searches} searches and ${result.deleted_batches} batches`);
++                    window.location.href = '/';
++                } else {
++                    alert('Error deleting data: ' + result.error);
++                }
++            } catch (error) {
++                alert('Error: ' + error);
++            }
++        }
+     </script>
+ </body>
+ </html>

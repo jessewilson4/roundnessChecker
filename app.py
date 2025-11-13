@@ -43,11 +43,10 @@ import time
 import pandas as pd
 from werkzeug.utils import secure_filename
 import gc
-import torch
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import csv
 from io import StringIO
-from config import load_config, save_config, get_setting, reload_config, DEFAULT_CONFIG
+from utils.config import load_config, save_config, get_setting, reload_config, DEFAULT_CONFIG
 from utils import (
     GoogleSearcher,
     compress_thumbnail,
@@ -122,8 +121,12 @@ batch_processors = {}
 def cleanup_memory():
     """Force garbage collection and clear CUDA cache"""
     gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass  # No torch available
 
 
 def sanitize_filename(text):
@@ -141,10 +144,10 @@ def init_searchers():
         google_searcher = GoogleSearcher(GOOGLE_API_KEY, GOOGLE_CSE_ID)
 
 
-def search_all_sources(search_term: str, num_images: int = 30):
+def search_all_sources(search_term: str, num_images: int = 30, start_offset: int = 0):
     """Search Google for images"""
     init_searchers()
-    return google_searcher.search_images(search_term, num_images)
+    return google_searcher.search_images(search_term, num_images, start_offset)
 
 
 def download_images_parallel(image_results):
@@ -231,8 +234,9 @@ def init_app():
 
 @app.route('/')
 def index():
-    """Main search page"""
-    return render_template('index.html')
+    """Home page"""
+    config = load_config()
+    return render_template('index.html', config=config)
 
 
 @app.route('/search', methods=['POST'])
@@ -253,17 +257,14 @@ def search():
     
     try:
         print(f"\n{'='*80}")
-        print(f" TROUBLESHOOTING SEARCH: '{search_term}'")
+        print(f" SEARCH: '{search_term}' ({num_images_requested} images)")
         print(f"{'='*80}")
         
-        # TROUBLESHOOTING: Hard limit to 10 to conserve API quota
-        num_to_fetch = 10
-        num_to_process = 10
-        
-        print(f"📥 Fetching {num_to_fetch} images from Google (troubleshooting mode)")
+        # Use requested number of images
+        print(f"📥 Fetching {num_images_requested} images from Google")
         
         # Search for images
-        image_results = search_all_sources(search_term, num_images=num_to_fetch)
+        image_results = search_all_sources(search_term, num_images=num_images_requested)
         
         if not image_results:
             return render_template('index.html',
@@ -283,78 +284,103 @@ def search():
         
         print(f"\n✅ Successfully downloaded {len(downloads)}/{len(image_results)} images")
         
-        # Process in batches with full result construction
+        # Process in batches - INITIAL FETCH ONLY
         print(f"\n🔬 Analyzing {len(downloads)} images in batches of {BATCH_SIZE}...")
         results = []
-        
-        for batch_start in range(0, len(downloads), BATCH_SIZE):
-            batch_end = min(batch_start + BATCH_SIZE, len(downloads))
-            batch = downloads[batch_start:batch_end]
+        seen_image_ids = set()
             
-            print(f"\n   Batch {batch_start//BATCH_SIZE + 1}: Processing {len(batch)} images")
+            if not image_results:
+                print(f"  ⚠️  No more images available from API")
+                break
             
-            # Extract data
-            batch_img_data = [item[0] for item in batch]
-            batch_img_bytes = [item[1] for item in batch]
+            print(f"  ✓ Retrieved {len(image_results)} total images")
             
-            # Batch analyze
-            analyses = analyze_images_batch(batch_img_bytes, search_term, analyzer)
+            # Download images
+            print(f"  ⬇️  Downloading {len(image_results)} images...")
+            downloads = download_images_parallel(image_results)
             
-            # Process results
-            for img_data, image_bytes, analysis in zip(batch_img_data, batch_img_bytes, analyses):
-                if not analysis:
-                    continue
+            if not downloads:
+                print(f"  ⚠️  No successful downloads")
+                break
+            
+            print(f"  ✅ Successfully downloaded {len(downloads)} images")
+            total_images_tried += len(downloads)
+            
+            # Process in batches
+            for batch_start in range(0, len(downloads), BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, len(downloads))
+                batch = downloads[batch_start:batch_end]
                 
-                # Save thumbnail
-                thumbnail = compress_thumbnail(image_bytes, max_size_kb=25)
-                safe_search_term = sanitize_filename(search_term)
-                thumbnail_filename = f"{safe_search_term}_{img_data['image_id']}_thumb.jpg"
-                thumbnail_path = os.path.join(app.config['IMAGES_DIR'], thumbnail_filename)
+                print(f"\n   Batch {batch_start//BATCH_SIZE + 1}: Processing {len(batch)} images")
                 
-                with open(thumbnail_path, 'wb') as f:
-                    f.write(thumbnail)
+                # Extract data
+                batch_img_data = [item[0] for item in batch]
+                batch_img_bytes = [item[1] for item in batch]
                 
-                # Save visualization images
-                viz_paths = {}
-                for viz_type, viz_bytes in analysis['visualizations'].items():
-                    viz_filename = f"{safe_search_term}_{img_data['image_id']}_{viz_type}.jpg"
-                    viz_path = os.path.join(app.config['IMAGES_DIR'], viz_filename)
-                    with open(viz_path, 'wb') as f:
-                        f.write(viz_bytes)
-                    viz_paths[viz_type] = viz_filename
+                # Batch analyze
+                analyses = analyze_images_batch(batch_img_bytes, search_term, analyzer)
                 
-                # Calculate scores
-                composite_pct = analysis['composite'] * 100
-                roundness_score = get_roundness_score(composite_pct)
-                score_desc, score_color = get_score_description(roundness_score)
+                # Process results
+                for img_data, image_bytes, analysis in zip(batch_img_data, batch_img_bytes, analyses):
+                    if not analysis:
+                        continue
+                    
+                    # Save thumbnail
+                    thumbnail = compress_thumbnail(image_bytes, max_size_kb=25)
+                    safe_search_term = sanitize_filename(search_term)
+                    thumbnail_filename = f"{safe_search_term}_google_{img_data['image_id']}_thumb.jpg"
+                    thumbnail_path = os.path.join(app.config['IMAGES_DIR'], thumbnail_filename)
+                    
+                    with open(thumbnail_path, 'wb') as f:
+                        f.write(thumbnail)
+                    
+                    # Save visualization images
+                    viz_paths = {}
+                    for viz_type, viz_bytes in analysis['visualizations'].items():
+                        viz_filename = f"{safe_search_term}_google_{img_data['image_id']}_{viz_type}.jpg"
+                        viz_path = os.path.join(app.config['IMAGES_DIR'], viz_filename)
+                        with open(viz_path, 'wb') as f:
+                            f.write(viz_bytes)
+                        viz_paths[viz_type] = viz_filename
+                    
+                    # Calculate scores
+                    composite_pct = analysis['composite'] * 100
+                    roundness_score = get_roundness_score(composite_pct)
+                    score_desc, score_color = get_score_description(roundness_score)
+                    
+                    # Build complete result object
+                    results.append({
+                        'image_id': img_data['image_id'],
+                        'url': img_data['url'],
+                        'title': img_data.get('title', ''),
+                        'source': 'google',
+                        'thumbnail_path': thumbnail_filename,
+                        'viz_paths': viz_paths,
+                        'circularity': analysis['circularity'],
+                        'aspect_ratio': analysis['aspect_ratio'],
+                        'eccentricity': analysis['eccentricity'],
+                        'solidity': analysis['solidity'],
+                        'convexity': analysis['convexity'],
+                        'composite': analysis['composite'],
+                        'roundness_score': roundness_score,
+                        'score_description': score_desc,
+                        'score_color': score_color,
+                        'area': analysis['area'],
+                        'perimeter': analysis.get('perimeter', 0)
+                    })
+                    
+                    # Stop this batch if we have enough
+                    if len(results) >= num_images_requested:
+                        break
                 
-                # Build complete result object
-                results.append({
-                    'image_id': img_data['image_id'],
-                    'url': img_data['url'],
-                    'title': img_data.get('title', ''),
-                    'source': 'google',
-                    'thumbnail_path': thumbnail_filename,
-                    'viz_paths': viz_paths,
-                    'circularity': analysis['circularity'],
-                    'aspect_ratio': analysis['aspect_ratio'],
-                    'eccentricity': analysis['eccentricity'],
-                    'solidity': analysis['solidity'],
-                    'convexity': analysis['convexity'],
-                    'composite': analysis['composite'],
-                    'roundness_score': roundness_score,
-                    'score_description': score_desc,
-                    'score_color': score_color,
-                    'area': analysis['area'],
-                    'perimeter': analysis.get('perimeter', 0)
-                })
+                # Cleanup after batch
+                cleanup_memory()
                 
+                # Stop all processing if we have enough
                 if len(results) >= num_images_requested:
                     break
             
-            # Cleanup after batch
-            cleanup_memory()
-            
+            # Final check
             if len(results) >= num_images_requested:
                 break
         
@@ -362,6 +388,8 @@ def search():
             cleanup_memory()
             return render_template('index.html',
                                  error=f"No objects detected in images for '{search_term}'.")
+        
+        print(f"\n✅ Successfully processed {len(results)} images after trying {total_images_tried} total")
         
         print(f"✓ Got {len(results)} successful results")
         
@@ -459,6 +487,7 @@ def search():
         
         return render_template('results.html',
                              search_term=search_term,
+                             config=load_config(),
                              results=clean_results[:10],
                              all_results=clean_results,
                              outliers=clean_outliers,
@@ -483,13 +512,14 @@ def search():
 def history():
     """Search history page"""
     history_data = database.get_search_history(limit=50)
+    batches = database.get_all_batches()
     
     # Add roundness scores
     for search in history_data:
         search['roundness_score'] = get_roundness_score(search['avg_composite'])
         search['score_description'], search['score_color'] = get_score_description(search['roundness_score'])
     
-    return render_template('history.html', history=history_data)
+    return render_template('history.html', history=history_data, batches=batches)
 
 
 @app.route('/load/<int:search_id>')
@@ -1223,6 +1253,29 @@ def admin_reset():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/admin/delete_all', methods=['POST'])
+def admin_delete_all():
+    """Delete all searches and batches"""
+    try:
+        # Get all searches
+        all_searches = database.get_search_history(limit=10000)
+        search_ids = [s['id'] for s in all_searches]
+        
+        # Get all batches
+        all_batches = database.get_all_batches()
+        batch_ids = [b['id'] for b in all_batches]
+        
+        # Delete searches
+        if search_ids:
+            database.delete_searches(search_ids)
+        
+        # Delete batches
+        for batch_id in batch_ids:
+            database.delete_batch(batch_id)
+        
+        return jsonify({'success': True, 'deleted_searches': len(search_ids), 'deleted_batches': len(batch_ids)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 if __name__ == '__main__':
     init_app()

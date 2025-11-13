@@ -30,22 +30,46 @@ class GoogleSearcher:
         self.last_request_time = 0
         self.min_request_interval = 0.5  # 500ms between API calls
     
-    def search_images(self, search_term: str, num_images: int = 10) -> List[Dict]:
+    def search_images(self, search_term: str, num_images: int = 10, start_offset: int = 0) -> List[Dict]:
         """
-        Search for images - hard limited to 10 per API call
+        Search for images using multiple API calls if needed (Google returns max 10 per call)
         
         Args:
             search_term: Search query
-            num_images: Requested number (ignored, always returns 10)
+            num_images: Total number requested (will make multiple API calls if > 10)
             
         Returns:
             List of image metadata dicts with 'url', 'title', 'width', 'height', etc.
         """
-        num_images = 10  # Google API limit per request
+        all_results = []
+        calls_needed = (num_images + 9) // 10  # Round up: 30 images = 3 calls
         
-        print(f"📥 Fetching up to {num_images} images for: '{search_term}'")
+        print(f"📥 Fetching up to {num_images} images for: '{search_term}' ({calls_needed} API calls)")
         
-        api_results, filtered_results = self._single_search(search_term)
+        seen_urls = set()
+        
+        for call_num in range(calls_needed):
+            start_index = start_offset + (call_num * 10) + 1
+            api_results, filtered_results = self._single_search(search_term, start_index)
+            
+            # Deduplicate by URL
+            for result in filtered_results:
+                if result['url'] not in seen_urls:
+                    seen_urls.add(result['url'])
+                    all_results.append(result)
+            
+            # Stop if we got fewer than 10 (no more results available)
+            if len(api_results) < 10:
+                break
+            
+            # Stop if we have enough unique results
+            if len(all_results) >= num_images:
+                break
+        
+        print(f"   ✓ Deduplicated: {len(all_results)} unique images from {len(seen_urls)} total")
+        
+        # Return only requested amount
+        return all_results[:num_images]
         
         print(f"✅ {len(filtered_results)} images ready for download\n")
         return filtered_results
@@ -66,10 +90,24 @@ class GoogleSearcher:
         if elapsed < self.min_request_interval:
             time.sleep(self.min_request_interval - elapsed)
         
+        # Load config and build enhanced query
+        from utils.config import get_setting
+        positive_keywords = get_setting('search.positive_keywords', [])
+        negative_keywords = get_setting('search.negative_keywords', [])
+        
+        # Build query: "dog isolated whole -group -multiple"
+        enhanced_query = search_term
+        if positive_keywords:
+            enhanced_query += ' ' + ' '.join(positive_keywords)
+        if negative_keywords:
+            enhanced_query += ' ' + ' '.join(f'-{kw}' for kw in negative_keywords)
+        
+        print(f"🔍 Enhanced query: '{enhanced_query}'")
+        
         params = {
             'key': self.api_key,
             'cx': self.search_engine_id,
-            'q': search_term,
+            'q': enhanced_query,
             'searchType': 'image',
             'imgSize': 'xxlarge',  # Largest available
             'num': 10,

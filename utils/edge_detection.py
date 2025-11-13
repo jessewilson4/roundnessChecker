@@ -593,22 +593,29 @@ def analyze_image_roundness(image_data: bytes, search_term: str, analyzer: Round
         
         img_array = np.array(img_pil)
         
-        # Detect object
-        detection = analyzer.detect_object(img_pil, search_term)
+        # Detect object with config threshold
+        from utils.config import get_setting
+        confidence_threshold = get_setting('detection.confidence_threshold', 0.25)
+        detection = analyzer.detect_object(img_pil, search_term, threshold=confidence_threshold)
         
         if detection is None:
             return None
         
-        # NEW: FILTER 1 - Confidence check
-        if detection['confidence'] < 0.15:
-            print(f"    ✗ Low confidence: {detection['confidence']:.2f}")
+        # Load thresholds from config
+        from utils.config import get_setting
+        confidence_threshold = get_setting('detection.confidence_threshold', 0.25)
+        closeup_threshold = get_setting('detection.closeup_threshold', 0.90)
+        
+        # FILTER 1 - Confidence check
+        if detection['confidence'] < confidence_threshold:
+            print(f"    ✗ Low confidence: {detection['confidence']:.2f} < {confidence_threshold}")
             return None
         
-        # NEW: FILTER 2 - Bbox size check (closeup filter)
+        # FILTER 2 - Bbox size check (closeup filter)
         bbox = detection['bbox']
         bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
         img_area = img_array.shape[0] * img_array.shape[1]
-        if bbox_area / img_area > 0.90:
+        if bbox_area / img_area > closeup_threshold:
             print(f"    ✗ Closeup detected: {bbox_area/img_area:.1%} coverage")
             return None
         
@@ -699,16 +706,21 @@ def analyze_images_batch(
                 continue
             
             try:
-                # NEW: Apply detection filters
-                if detection['confidence'] < 0.15:
-                    print(f"    ✗ Image {i}: Low confidence {detection['confidence']:.2f}")
+                # Load thresholds from config
+                from utils.config import get_setting
+                confidence_threshold = get_setting('detection.confidence_threshold', 0.25)
+                closeup_threshold = get_setting('detection.closeup_threshold', 0.90)
+                
+                # Apply detection filters
+                if detection['confidence'] < confidence_threshold:
+                    print(f"    ✗ Image {i}: Low confidence {detection['confidence']:.2f} < {confidence_threshold}")
                     results.append(None)
                     continue
                 
                 bbox = detection['bbox']
                 bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
                 img_area = img_array.shape[0] * img_array.shape[1]
-                if bbox_area / img_area > 0.90:
+                if bbox_area / img_area > closeup_threshold:
                     print(f"    ✗ Image {i}: Closeup {bbox_area/img_area:.1%}")
                     results.append(None)
                     continue

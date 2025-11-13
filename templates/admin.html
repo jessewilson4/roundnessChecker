@@ -338,6 +338,7 @@
             <div class="action-buttons">
                 <button class="btn-save" onclick="saveSettings()">💾 Save All Settings</button>
                 <button class="btn-reset" onclick="resetToDefaults()">🔄 Reset to Defaults</button>
+                <button class="btn-reset" onclick="deleteAllData()" style="margin-left: 10px;">🗑️ Delete All Data</button>
             </div>
         </main>
     </div>
@@ -478,6 +479,37 @@
         document.getElementById('newNegativeKeyword').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') addKeyword('negative');
         });
+        document.getElementById('newNegativeKeyword').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') addKeyword('negative');
+        });
+
+        async function deleteAllData() {
+            const confirmed = confirm(
+                '⚠️ WARNING: This will permanently delete ALL searches and batches.\n\n' +
+                'This action cannot be undone.\n\n' +
+                'Are you absolutely sure you want to continue?'
+            );
+            
+            if (!confirmed) return;
+            
+            try {
+                const response = await fetch('/admin/delete_all', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert(`✓ Deleted ${result.deleted_searches} searches and ${result.deleted_batches} batches`);
+                    window.location.href = '/';
+                } else {
+                    alert('Error deleting data: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error);
+            }
+        }
     </script>
 </body>
 </html>

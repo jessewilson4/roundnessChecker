@@ -32,10 +32,9 @@
                             class="search-input-results"
                             required>
                         <select name="num_images" class="image-count-select-results">
-                            <option value="2" {% if num_images == 2 %}selected{% endif %}>2</option>
-                            <option value="5" {% if num_images == 5 %}selected{% endif %}>5</option>
-                            <option value="20" {% if num_images == 20 %}selected{% endif %}>20</option>
-                            <option value="30" {% if num_images == 30 %}selected{% endif %}>30</option>
+                            {% for opt in config.api.images_dropdown_options %}
+                            <option value="{{ opt }}" {% if num_images == opt %}selected{% endif %}>{{ opt }} images</option>
+                            {% endfor %}
                         </select>
                         <button type="button" class="clear-button" onclick="clearSearch()" title="Clear search">×</button>
                         <button type="submit" class="search-button-results">Search</button>
