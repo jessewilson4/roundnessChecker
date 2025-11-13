@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Settings - Image Roundness Analyzer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .admin-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .settings-section {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .settings-section h2 {
+            margin-top: 0;
+            color: #1e293b;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 10px;
+        }
+        
+        .setting-row {
+            display: grid;
+            grid-template-columns: 250px 1fr 80px;
+            gap: 20px;
+            align-items: start;
+            padding: 15px 0;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        
+        .setting-label {
+            font-weight: 600;
+            color: #334155;
+        }
+        
+        .setting-description {
+            font-size: 0.85rem;
+            color: #64748b;
+            margin-top: 5px;
+        }
+        
+        .setting-input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 0.95rem;
+        }
+        
+        .setting-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        
+        .keywords-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        
+        .keyword-tag {
+            background: #e0e7ff;
+            color: #3730a3;
+            padding: 6px 12px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+        }
+        
+        .keyword-tag.negative {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .keyword-remove {
+            background: none;
+            border: none;
+            color: currentColor;
+            cursor: pointer;
+            font-size: 1.2rem;
+            line-height: 1;
+            padding: 0;
+            opacity: 0.6;
+        }
+        
+        .keyword-remove:hover {
+            opacity: 1;
+        }
+        
+        .keyword-input-group {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .btn-save {
+            background: #10b981;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        
+        .btn-save:hover {
+            background: #059669;
+        }
+        
+        .btn-reset {
+            background: #ef4444;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        
+        .btn-reset:hover {
+            background: #dc2626;
+        }
+        
+        .btn-secondary {
+            background: #6b7280;
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        
+        .btn-secondary:hover {
+            background: #4b5563;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 2px solid #e2e8f0;
+        }
+        
+        .success-message {
+            background: #d1fae5;
+            color: #065f46;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .error-message {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <h1 class="app-title">⚙️ Admin Settings</h1>
+            </div>
+            <nav class="header-nav">
+                <a href="{{ url_for('index') }}" class="nav-link">🏠 Home</a>
+                <a href="{{ url_for('history') }}" class="nav-link">📊 History</a>
+                <a href="{{ url_for('batch_processing') }}" class="nav-link">📦 Batch</a>
+            </nav>
+        </header>
+
+        <main class="admin-container">
+            <div class="success-message" id="successMessage"></div>
+            <div class="error-message" id="errorMessage"></div>
+
+            <!-- Detection Settings -->
+            <div class="settings-section">
+                <h2>🎯 Object Detection Settings</h2>
+                
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Confidence Threshold</div>
+                        <div class="setting-description">Minimum confidence score (0.0 - 1.0). Lower = more detections but less accurate.</div>
+                    </div>
+                    <input type="number" class="setting-input" id="confidence_threshold" 
+                           min="0" max="1" step="0.01" value="{{ config.detection.confidence_threshold }}">
+                    <div style="text-align: right; color: #64748b; font-size: 0.9rem;">
+                        {{ config.detection.confidence_threshold }}
+                    </div>
+                </div>
+                
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Closeup Threshold</div>
+                        <div class="setting-description">Maximum bbox coverage (0.0 - 1.0). Images where object covers >90% are rejected.</div>
+                    </div>
+                    <input type="number" class="setting-input" id="closeup_threshold" 
+                           min="0" max="1" step="0.01" value="{{ config.detection.closeup_threshold }}">
+                    <div style="text-align: right; color: #64748b; font-size: 0.9rem;">
+                        {{ config.detection.closeup_threshold }}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Outlier Detection -->
+            <div class="settings-section">
+                <h2>📊 Outlier Detection Settings</h2>
+                
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">IQR Multiplier</div>
+                        <div class="setting-description">Standard is 1.5. Lower = more strict (removes more), Higher = more lenient.</div>
+                    </div>
+                    <input type="number" class="setting-input" id="iqr_multiplier" 
+                           min="0.5" max="3.0" step="0.1" value="{{ config.outliers.iqr_multiplier }}">
+                    <div style="text-align: right; color: #64748b; font-size: 0.9rem;">
+                        {{ config.outliers.iqr_multiplier }}
+                    </div>
+                </div>
+                
+                <div style="padding: 15px; background: #f8fafc; border-radius: 8px; margin-top: 15px;">
+                    <strong>How Outliers Work:</strong>
+                    <p style="margin: 10px 0; color: #475569;">The IQR (Interquartile Range) method removes statistical outliers:</p>
+                    <ul style="margin: 10px 0; color: #475569;">
+                        <li><strong>Q1</strong> = 25th percentile of roundness scores</li>
+                        <li><strong>Q3</strong> = 75th percentile of roundness scores</li>
+                        <li><strong>IQR</strong> = Q3 - Q1</li>
+                        <li><strong>Outliers</strong> = scores < (Q1 - 1.5×IQR) or > (Q3 + 1.5×IQR)</li>
+                    </ul>
+                    <p style="margin: 10px 0; color: #475569;">Example: If Q1=40%, Q3=70%, IQR=30%, then outliers are <-5% or >115%</p>
+                </div>
+            </div>
+
+            <!-- Search Keywords -->
+            <div class="settings-section">
+                <h2>🔍 Search Keywords</h2>
+                
+                <div style="margin-bottom: 30px;">
+                    <h3 style="color: #10b981; margin-bottom: 10px;">✓ Positive Keywords (Improve Results)</h3>
+                    <div class="keywords-list" id="positiveKeywords">
+                        {% for keyword in config.search.positive_keywords %}
+                        <div class="keyword-tag">
+                            {{ keyword }}
+                            <button class="keyword-remove" onclick="removeKeyword('positive', '{{ keyword }}')">&times;</button>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <div class="keyword-input-group">
+                        <input type="text" class="setting-input" id="newPositiveKeyword" placeholder="Add positive keyword...">
+                        <button class="btn-secondary" onclick="addKeyword('positive')">Add</button>
+                    </div>
+                </div>
+                
+                <div>
+                    <h3 style="color: #ef4444; margin-bottom: 10px;">✗ Negative Keywords (Exclude Results)</h3>
+                    <div class="keywords-list" id="negativeKeywords">
+                        {% for keyword in config.search.negative_keywords %}
+                        <div class="keyword-tag negative">
+                            {{ keyword }}
+                            <button class="keyword-remove" onclick="removeKeyword('negative', '{{ keyword }}')">&times;</button>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <div class="keyword-input-group">
+                        <input type="text" class="setting-input" id="newNegativeKeyword" placeholder="Add negative keyword...">
+                        <button class="btn-secondary" onclick="addKeyword('negative')">Add</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Image Processing -->
+            <div class="settings-section">
+                <h2>🖼️ Image Processing Settings</h2>
+                
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Max Resolution</div>
+                        <div class="setting-description">Maximum dimension for processing (px). Higher = better quality but slower.</div>
+                    </div>
+                    <input type="number" class="setting-input" id="max_resolution" 
+                           min="512" max="2048" step="128" value="{{ config.image_processing.max_resolution }}">
+                    <div style="text-align: right; color: #64748b; font-size: 0.9rem;">
+                        {{ config.image_processing.max_resolution }}px
+                    </div>
+                </div>
+                
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Batch Size</div>
+                        <div class="setting-description">Images processed simultaneously. Higher = faster but more memory.</div>
+                    </div>
+                    <input type="number" class="setting-input" id="batch_size" 
+                           min="1" max="16" step="1" value="{{ config.image_processing.batch_size }}">
+                    <div style="text-align: right; color: #64748b; font-size: 0.9rem;">
+                        {{ config.image_processing.batch_size }}
+                    </div>
+                </div>
+            </div>
+
+            <!-- API Settings -->
+            <div class="settings-section">
+                <h2>🔧 API & Search Settings</h2>
+                
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Default Images Per Search</div>
+                        <div class="setting-description">Default number of images to fetch per search.</div>
+                    </div>
+                    <select class="setting-input" id="images_per_search_default">
+                        {% for opt in config.api.images_dropdown_options %}
+                        <option value="{{ opt }}" {% if opt == config.api.images_per_search_default %}selected{% endif %}>{{ opt }}</option>
+                        {% endfor %}
+                    </select>
+                    <div></div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="action-buttons">
+                <button class="btn-save" onclick="saveSettings()">💾 Save All Settings</button>
+                <button class="btn-reset" onclick="resetToDefaults()">🔄 Reset to Defaults</button>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const config = {{ config|tojson }};
+        
+        function addKeyword(type) {
+            const input = document.getElementById(`new${type.charAt(0).toUpperCase() + type.slice(1)}Keyword`);
+            const keyword = input.value.trim();
+            
+            if (!keyword) return;
+            
+            // Add to config
+            if (type === 'positive') {
+                config.search.positive_keywords.push(keyword);
+            } else {
+                config.search.negative_keywords.push(keyword);
+            }
+            
+            // Add to UI
+            const container = document.getElementById(`${type}Keywords`);
+            const tag = document.createElement('div');
+            tag.className = `keyword-tag${type === 'negative' ? ' negative' : ''}`;
+            tag.innerHTML = `
+                ${keyword}
+                <button class="keyword-remove" onclick="removeKeyword('${type}', '${keyword}')">&times;</button>
+            `;
+            container.appendChild(tag);
+            
+            input.value = '';
+        }
+        
+        function removeKeyword(type, keyword) {
+            // Remove from config
+            if (type === 'positive') {
+                config.search.positive_keywords = config.search.positive_keywords.filter(k => k !== keyword);
+            } else {
+                config.search.negative_keywords = config.search.negative_keywords.filter(k => k !== keyword);
+            }
+            
+            // Refresh display
+            location.reload();
+        }
+        
+        async function saveSettings() {
+            // Collect all settings
+            const settings = {
+                detection: {
+                    confidence_threshold: parseFloat(document.getElementById('confidence_threshold').value),
+                    closeup_threshold: parseFloat(document.getElementById('closeup_threshold').value)
+                },
+                outliers: {
+                    iqr_multiplier: parseFloat(document.getElementById('iqr_multiplier').value),
+                    method: config.outliers.method
+                },
+                search: {
+                    positive_keywords: config.search.positive_keywords,
+                    negative_keywords: config.search.negative_keywords
+                },
+                image_processing: {
+                    max_resolution: parseInt(document.getElementById('max_resolution').value),
+                    batch_size: parseInt(document.getElementById('batch_size').value),
+                    thumbnail_size_kb: config.image_processing.thumbnail_size_kb
+                },
+                api: {
+                    images_per_search_default: parseInt(document.getElementById('images_per_search_default').value),
+                    images_dropdown_options: config.api.images_dropdown_options
+                }
+            };
+            
+            try {
+                const response = await fetch('/admin/save', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(settings)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('success', '✓ Settings saved successfully!');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showMessage('error', '✗ Error: ' + result.error);
+                }
+            } catch (error) {
+                showMessage('error', '✗ Error saving settings: ' + error.message);
+            }
+        }
+        
+        async function resetToDefaults() {
+            if (!confirm('Are you sure you want to reset all settings to defaults?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/admin/reset', {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('success', '✓ Settings reset to defaults!');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showMessage('error', '✗ Error: ' + result.error);
+                }
+            } catch (error) {
+                showMessage('error', '✗ Error resetting settings: ' + error.message);
+            }
+        }
+        
+        function showMessage(type, message) {
+            const successEl = document.getElementById('successMessage');
+            const errorEl = document.getElementById('errorMessage');
+            
+            successEl.style.display = 'none';
+            errorEl.style.display = 'none';
+            
+            if (type === 'success') {
+                successEl.textContent = message;
+                successEl.style.display = 'block';
+            } else {
+                errorEl.textContent = message;
+                errorEl.style.display = 'block';
+            }
+            
+            window.scrollTo(0, 0);
+        }
+        
+        // Allow Enter key to add keywords
+        document.getElementById('newPositiveKeyword').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') addKeyword('positive');
+        });
+        
+        document.getElementById('newNegativeKeyword').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') addKeyword('negative');
+        });
+    </script>
+</body>
+</html>

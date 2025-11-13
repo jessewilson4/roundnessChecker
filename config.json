@@ -1,0 +1,28 @@
+{
+  "detection": {
+    "confidence_threshold": 0.05,
+    "closeup_threshold": 0.90,
+    "comment": "confidence_threshold: minimum confidence for object detection (0.0-1.0). closeup_threshold: maximum bbox coverage to avoid closeups (0.0-1.0)"
+  },
+  "outliers": {
+    "iqr_multiplier": 1.5,
+    "method": "iqr",
+    "comment": "iqr_multiplier: standard is 1.5 for IQR outlier detection. Lower = more strict (more outliers removed), Higher = more lenient. method: 'iqr' or 'zscore'"
+  },
+  "search": {
+    "positive_keywords": ["isolated", "whole", "single", "white background"],
+    "negative_keywords": ["group", "multiple", "crowd", "collage", "collection"],
+    "comment": "positive_keywords: terms added to improve search quality. negative_keywords: terms to exclude from results"
+  },
+  "image_processing": {
+    "max_resolution": 1024,
+    "batch_size": 4,
+    "thumbnail_size_kb": 25,
+    "comment": "max_resolution: maximum dimension for image processing (px). batch_size: images processed per batch. thumbnail_size_kb: max thumbnail file size"
+  },
+  "api": {
+    "images_per_search_default": 30,
+    "images_dropdown_options": [10, 20, 30, 40, 50],
+    "comment": "images_per_search_default: default number of images to fetch. images_dropdown_options: available options in dropdown"
+  }
+}
