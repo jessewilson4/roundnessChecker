@@ -1,7 +1,7 @@
 {
   "detection": {
-    "confidence_threshold": 0.05,
-    "closeup_threshold": 0.9,
+    "confidence_threshold": 0.01,
+    "closeup_threshold": 0.99,
     "comment": "confidence_threshold: minimum confidence for object detection (0.0-1.0). closeup_threshold: maximum bbox coverage to avoid closeups (0.0-1.0)"
   },
   "outliers": {

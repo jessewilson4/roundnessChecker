@@ -37,6 +37,7 @@ class GoogleSearcher:
         Args:
             search_term: Search query
             num_images: Total number requested (will make multiple API calls if > 10)
+            start_offset: Starting offset for pagination
             
         Returns:
             List of image metadata dicts with 'url', 'title', 'width', 'height', etc.
@@ -70,9 +71,6 @@ class GoogleSearcher:
         
         # Return only requested amount
         return all_results[:num_images]
-        
-        print(f"✅ {len(filtered_results)} images ready for download\n")
-        return filtered_results
     
     def _single_search(self, search_term: str, start_index: int = 1) -> Tuple[List[Dict], List[Dict]]:
         """
@@ -95,10 +93,18 @@ class GoogleSearcher:
         positive_keywords = get_setting('search.positive_keywords', [])
         negative_keywords = get_setting('search.negative_keywords', [])
         
-        # Build query: "dog isolated whole -group -multiple"
-        enhanced_query = search_term
+        # CRITICAL FIX: Quote multi-word search terms to keep them together
+        # "Golf R" should search for the exact phrase, not "Golf" OR "R"
+        if ' ' in search_term:
+            enhanced_query = f'"{search_term}"'
+        else:
+            enhanced_query = search_term
+        
+        # Add positive keywords
         if positive_keywords:
             enhanced_query += ' ' + ' '.join(positive_keywords)
+        
+        # Add negative keywords
         if negative_keywords:
             enhanced_query += ' ' + ' '.join(f'-{kw}' for kw in negative_keywords)
         

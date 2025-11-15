@@ -243,7 +243,7 @@ def index():
 def search():
     """
     Process search request with batch downloads and inference.
-    TROUBLESHOOTING MODE: Hard limit 10 images to conserve API quota.
+    Uses retry loop with pagination to fetch enough valid results.
     """
     search_term = request.form.get('search_term', '').strip()
     num_images_requested = int(request.form.get('num_images', 30))
@@ -260,143 +260,153 @@ def search():
         print(f" SEARCH: '{search_term}' ({num_images_requested} images)")
         print(f"{'='*80}")
         
-        # Use requested number of images
-        print(f"📥 Fetching {num_images_requested} images from Google")
+        # Phase 1.3: Add download limit to prevent runaway loops
+        max_images_to_download = num_images_requested * 3  # Cap at 3x requested
         
-        # Search for images
-        image_results = search_all_sources(search_term, num_images=num_images_requested)
-        
-        if not image_results:
-            return render_template('index.html',
-                                 error=f"No images found for '{search_term}'.")
-        
-        print(f"\n✓ API returned {len(image_results)} images")
-        
-        # Download images using GoogleSearcher's internal browser management
-        print(f"\n⬇️  Downloading {len(image_results)} images with Playwright...")
-        print("="*80)
-        downloads = download_images_parallel(image_results)
-        print("="*80)
-        
-        if not downloads:
-            return render_template('index.html',
-                                 error=f"Failed to download any images for '{search_term}'.")
-        
-        print(f"\n✅ Successfully downloaded {len(downloads)}/{len(image_results)} images")
-        
-        # Process in batches - INITIAL FETCH ONLY
-        print(f"\n🔬 Analyzing {len(downloads)} images in batches of {BATCH_SIZE}...")
+        # Retry loop with pagination
+        seen_urls = set()
         results = []
-        seen_image_ids = set()
+        pagination_offset = 0
+        max_fetch_attempts = 5
+        total_downloaded = 0
+        
+        print(f"⚙️  Settings: max_attempts={max_images_to_download}, batch_size=10\n")
+        
+        while len(results) < num_images_requested and total_downloaded < max_images_to_download and pagination_offset < max_fetch_attempts * 10:
+            still_needed = num_images_requested - len(results)
+            
+            print(f"\n📥 Need {still_needed} more valid results. Fetching batch (offset={pagination_offset})...")
+            
+            # Fetch with pagination offset
+            image_results = search_all_sources(search_term, num_images=10, start_offset=pagination_offset)
             
             if not image_results:
-                print(f"  ⚠️  No more images available from API")
+                print("⚠️  No more results from API")
                 break
             
-            print(f"  ✓ Retrieved {len(image_results)} total images")
+            # Filter already-tried URLs
+            new_results = [r for r in image_results if r['url'] not in seen_urls]
+            seen_urls.update(r['url'] for r in image_results)
             
-            # Download images
-            print(f"  ⬇️  Downloading {len(image_results)} images...")
-            downloads = download_images_parallel(image_results)
+            if not new_results:
+                print("⚠️  All results already tried")
+                pagination_offset += 10
+                continue
+            
+            print(f"✓ Got {len(new_results)} new unique images")
+            
+            # Download
+            print(f"⬇️  Downloading {len(new_results)} images...")
+            print("="*80)
+            downloads = download_images_parallel(new_results)
+            print("="*80)
             
             if not downloads:
-                print(f"  ⚠️  No successful downloads")
+                print("⚠️  No successful downloads")
+                pagination_offset += 10
+                continue
+            
+            print(f"✅ Downloaded {len(downloads)} images")
+            total_downloaded += len(downloads)
+            
+            # Phase 1.2: SEQUENTIAL PROCESSING (not batches)
+            # Process one image at a time with immediate feedback
+            print(f"\n🔬 Analyzing {len(downloads)} images sequentially...")
+            
+            for idx, (img_data, image_bytes) in enumerate(downloads, 1):
+                # Check if we already have enough before processing
+                if len(results) >= num_images_requested:
+                    print(f"\n🎯 Target reached: {len(results)}/{num_images_requested} valid images")
+                    break
+                
+                # Analyze single image with detailed logging
+                image_id = f"{img_data.get('title', 'unknown')[:30]}_{img_data['image_id']}"
+                analysis = analyze_image_roundness(image_bytes, search_term, analyzer, image_id)
+                
+                if not analysis:
+                    # Logging already done in analyze_image_roundness
+                    continue
+                
+                # Save thumbnail
+                thumbnail = compress_thumbnail(image_bytes, max_size_kb=25)
+                safe_search_term = sanitize_filename(search_term)
+                thumbnail_filename = f"{safe_search_term}_google_{img_data['image_id']}_thumb.jpg"
+                thumbnail_path = os.path.join(app.config['IMAGES_DIR'], thumbnail_filename)
+                
+                with open(thumbnail_path, 'wb') as f:
+                    f.write(thumbnail)
+                
+                # Save visualization images
+                viz_paths = {}
+                for viz_type, viz_bytes in analysis['visualizations'].items():
+                    viz_filename = f"{safe_search_term}_google_{img_data['image_id']}_{viz_type}.jpg"
+                    viz_path = os.path.join(app.config['IMAGES_DIR'], viz_filename)
+                    with open(viz_path, 'wb') as f:
+                        f.write(viz_bytes)
+                    viz_paths[viz_type] = viz_filename
+                
+                # Calculate scores
+                composite_pct = analysis['composite'] * 100
+                roundness_score = get_roundness_score(composite_pct)
+                score_desc, score_color = get_score_description(roundness_score)
+                
+                # Build complete result object
+                results.append({
+                    'image_id': img_data['image_id'],
+                    'url': img_data['url'],
+                    'title': img_data.get('title', ''),
+                    'source': 'google',
+                    'thumbnail_path': thumbnail_filename,
+                    'viz_paths': viz_paths,
+                    'circularity': analysis['circularity'],
+                    'aspect_ratio': analysis['aspect_ratio'],
+                    'eccentricity': analysis['eccentricity'],
+                    'solidity': analysis['solidity'],
+                    'convexity': analysis['convexity'],
+                    'composite': analysis['composite'],
+                    'roundness_score': roundness_score,
+                    'score_description': score_desc,
+                    'score_color': score_color,
+                    'area': analysis['area'],
+                    'perimeter': analysis.get('perimeter', 0),
+                    'detection_confidence': analysis.get('detection_confidence', 0)
+                })
+                
+                print(f"     📊 Progress: {len(results)}/{num_images_requested} valid images collected")
+                
+                # Memory cleanup after each image
+                cleanup_memory()
+            
+            # Check download limit
+            if total_downloaded >= max_images_to_download:
+                print(f"\n⚠️  Hit download limit: {total_downloaded}/{max_images_to_download} images tried")
+                print(f"   Collected {len(results)} valid images from {total_downloaded} attempts")
+                print(f"   Detection rate: {len(results)/total_downloaded*100:.1f}%")
+                if len(results) < num_images_requested:
+                    print(f"   💡 Tip: Try adjusting confidence threshold or search terms")
                 break
             
-            print(f"  ✅ Successfully downloaded {len(downloads)} images")
-            total_images_tried += len(downloads)
-            
-            # Process in batches
-            for batch_start in range(0, len(downloads), BATCH_SIZE):
-                batch_end = min(batch_start + BATCH_SIZE, len(downloads))
-                batch = downloads[batch_start:batch_end]
-                
-                print(f"\n   Batch {batch_start//BATCH_SIZE + 1}: Processing {len(batch)} images")
-                
-                # Extract data
-                batch_img_data = [item[0] for item in batch]
-                batch_img_bytes = [item[1] for item in batch]
-                
-                # Batch analyze
-                analyses = analyze_images_batch(batch_img_bytes, search_term, analyzer)
-                
-                # Process results
-                for img_data, image_bytes, analysis in zip(batch_img_data, batch_img_bytes, analyses):
-                    if not analysis:
-                        continue
-                    
-                    # Save thumbnail
-                    thumbnail = compress_thumbnail(image_bytes, max_size_kb=25)
-                    safe_search_term = sanitize_filename(search_term)
-                    thumbnail_filename = f"{safe_search_term}_google_{img_data['image_id']}_thumb.jpg"
-                    thumbnail_path = os.path.join(app.config['IMAGES_DIR'], thumbnail_filename)
-                    
-                    with open(thumbnail_path, 'wb') as f:
-                        f.write(thumbnail)
-                    
-                    # Save visualization images
-                    viz_paths = {}
-                    for viz_type, viz_bytes in analysis['visualizations'].items():
-                        viz_filename = f"{safe_search_term}_google_{img_data['image_id']}_{viz_type}.jpg"
-                        viz_path = os.path.join(app.config['IMAGES_DIR'], viz_filename)
-                        with open(viz_path, 'wb') as f:
-                            f.write(viz_bytes)
-                        viz_paths[viz_type] = viz_filename
-                    
-                    # Calculate scores
-                    composite_pct = analysis['composite'] * 100
-                    roundness_score = get_roundness_score(composite_pct)
-                    score_desc, score_color = get_score_description(roundness_score)
-                    
-                    # Build complete result object
-                    results.append({
-                        'image_id': img_data['image_id'],
-                        'url': img_data['url'],
-                        'title': img_data.get('title', ''),
-                        'source': 'google',
-                        'thumbnail_path': thumbnail_filename,
-                        'viz_paths': viz_paths,
-                        'circularity': analysis['circularity'],
-                        'aspect_ratio': analysis['aspect_ratio'],
-                        'eccentricity': analysis['eccentricity'],
-                        'solidity': analysis['solidity'],
-                        'convexity': analysis['convexity'],
-                        'composite': analysis['composite'],
-                        'roundness_score': roundness_score,
-                        'score_description': score_desc,
-                        'score_color': score_color,
-                        'area': analysis['area'],
-                        'perimeter': analysis.get('perimeter', 0)
-                    })
-                    
-                    # Stop this batch if we have enough
-                    if len(results) >= num_images_requested:
-                        break
-                
-                # Cleanup after batch
-                cleanup_memory()
-                
-                # Stop all processing if we have enough
-                if len(results) >= num_images_requested:
-                    break
-            
-            # Final check
+            # Exit main loop if we have enough results
             if len(results) >= num_images_requested:
                 break
+            
+            # Move to next page
+            pagination_offset += 10
         
         if not results:
             cleanup_memory()
             return render_template('index.html',
                                  error=f"No objects detected in images for '{search_term}'.")
         
-        print(f"\n✅ Successfully processed {len(results)} images after trying {total_images_tried} total")
+        print(f"\n{'='*80}")
+        print(f"✅ COMPLETED: {len(results)} valid images from {total_downloaded} downloads")
+        print(f"   Detection success rate: {len(results)/total_downloaded*100:.1f}%")
+        print(f"{'='*80}\n")
         
-        print(f"✓ Got {len(results)} successful results")
-        
-        # Filter outliers
-        print("\n📈 Filtering statistical outliers...")
-        filtered_results, outliers = remove_outliers(results, metric='composite')
-        print(f"✓ Kept {len(filtered_results)} results, removed {len(outliers)} outliers")
+        # Phase 1.4: NO automatic outlier filtering - user will review
+        print(f"📊 Keeping all {len(results)} detected images (no auto-filtering)")
+        filtered_results = results
+        outliers = []  # No automatic outlier removal
         
         # Sort and rank
         filtered_results.sort(key=lambda x: x['composite'], reverse=True)
