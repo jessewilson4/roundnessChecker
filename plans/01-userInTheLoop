@@ -1,0 +1,169 @@
+USER-IN-THE-LOOP WORD APPROVAL SYSTEM - IMPLEMENTATION PLAN
+
+=============================================================================
+
+OVERVIEW:
+Transform batch processing to sequential processing with word-level approval 
+workflow. Users can approve/reject images and rerun incomplete keywords to 
+reach target image counts.
+
+DECISIONS MADE:
+- Users decide on outliers (remove automatic filtering)  
+- Manual "Rerun Incomplete" button (contextual, appears when needed)
+- Flexible status filtering (approved/pending/needs-more-images)
+
+=============================================================================
+
+PHASE 1: SEQUENTIAL PROCESSING & DIAGNOSTICS (Week 1)
+
+1.1 Add Detection Logging (Day 1-2)
+   - Log each image as it's processed
+   - Show OWL-ViT confidence scores  
+   - Display what object was detected
+   - Track why images fail/pass detection
+   - Files: app.py, utils/edge_detection.py
+
+1.2 Convert to Sequential Processing (Day 2-3)
+   - Replace batch downloads with one-by-one processing
+   - Add real-time progress updates
+   - Better memory management
+   - Files: app.py
+
+1.3 Remove Automatic Outlier Filtering (Day 3-4)
+   - Let users see ALL detected images
+   - Show outlier statistics for reference only
+   - Files: app.py
+
+1.4 Enhanced Status Monitoring (Day 4-5)
+   - Real-time batch status updates
+   - Progress tracking per keyword
+   - Files: app.py, templates/
+
+=============================================================================
+
+PHASE 2: DATABASE SCHEMA CHANGES (Week 2)
+
+2.1 Add Word-Level Status Tracking
+   - keyword_status table: approved/pending_review/needs_more_images
+   - Track images_required, images_valid, images_rejected per keyword
+   - Track pagination_offset for resuming searches
+   - Files: utils/database.py, migrations/
+
+2.2 Update Results Storage
+   - Link images to keywords
+   - Track user approval/rejection actions
+   - Store rejection reasons (optional)
+   - Files: utils/database.py
+
+=============================================================================
+
+PHASE 3: USER INTERFACE UPDATES (Week 2-3)
+
+3.1 Results Page Enhancements
+   - Add "Approve Word" button (approves entire keyword)
+   - Individual image reject buttons (existing)
+   - Show outlier statistics as reference
+   - Navigation between keywords in batch
+   - Files: templates/results.html
+
+3.2 Batch History Filtering
+   - Filter dropdown: All/Approved/Pending Review/Needs More Images
+   - Show status counts in batch list
+   - Files: templates/batch.html, static/js/
+
+3.3 Contextual Rerun Button  
+   - Appears next to "Delete Selected" when incomplete keywords visible
+   - Shows count of keywords needing images
+   - Only visible when filtered view contains incomplete items
+   - Files: templates/batch.html
+
+=============================================================================
+
+PHASE 4: RERUN INCOMPLETE FUNCTIONALITY (Week 3)
+
+4.1 Deficit Calculation
+   - Calculate how many more images each keyword needs
+   - Resume from correct pagination offset
+   - Files: utils/database.py
+
+4.2 Selective Reprocessing
+   - Process only keywords that need more images
+   - Fetch exact number needed (not full batch)
+   - Update pagination offset for future runs
+   - Files: app.py
+
+4.3 Background Processing
+   - Queue incomplete keywords for reprocessing
+   - Real-time status updates during rerun
+   - Files: app.py
+
+=============================================================================
+
+PHASE 5: WORKFLOW OPTIMIZATION (Week 4)
+
+5.1 Batch Navigation
+   - Previous/Next buttons to cycle through filtered results
+   - Keyboard shortcuts for approve/reject
+   - Bulk operations on selected keywords
+   - Files: templates/, static/js/
+
+5.2 Quality Metrics
+   - Track approval rates per keyword type
+   - Detection success statistics
+   - User feedback on search quality
+   - Files: utils/database.py, templates/
+
+=============================================================================
+
+PHASE 6: TESTING & VALIDATION (Week 4)
+
+6.1 Unit Testing
+   - Test sequential processing
+   - Test word approval workflow
+   - Test rerun incomplete functionality
+   - Files: test_*.py
+
+6.2 Integration Testing
+   - Full workflow testing
+   - Edge case handling
+   - Performance validation
+   - Files: test_integration.py
+
+=============================================================================
+
+IMPLEMENTATION ORDER:
+
+Week 1: Phase 1 (Sequential + Logging) - Immediate visibility into issues
+Week 2: Phase 2 (Database) + Phase 3.1-3.2 (Basic UI)
+Week 3: Phase 3.3 + Phase 4 (Rerun functionality)  
+Week 4: Phase 5 + Phase 6 (Polish + Testing)
+
+KEY BENEFITS:
+- Reduces review burden (50 keywords vs 1000 images)
+- Better control over image quality
+- Precise diagnosis of detection issues
+- Efficient reprocessing of incomplete searches
+- Maintains existing functionality during transition
+
+=============================================================================
+
+FILES TO MODIFY:
+- app.py (main processing logic)
+- utils/database.py (schema changes)
+- utils/edge_detection.py (logging)
+- templates/results.html (approval UI)
+- templates/batch.html (filtering + rerun)
+- static/js/ (client-side interactions)
+
+NEW FILES:
+- migrations/add_keyword_status.sql
+- test_sequential_processing.py
+- test_word_approval.py
+- test_rerun_incomplete.py
+
+=============================================================================
+
+NEXT PHASE
+- rebuild standard search to include 2 values: 1) basic keyword to be used for OWL, 2) complex keyword to be used for image search
+- remove common keywords used in searches from batch searches (batch queries will be defined in the new document)
+- change batch processing from picking the desired column to using a standard document format.  The format will have the following headers: Keyword, Phrase, Category, Search Value.  The "Search Value" column will be used for the image search (with google) and the "Keyword" column will be used for the OWL search. 

@@ -1,0 +1,4 @@
+Keyword,Phrase,Category,Search Value
+apple,apple,FOOD & CONSUMABLES,
+wheel,automotive wheel,AUTOMOTIVE,"""automotive wheel""+vehicle +car+real -toy -diagram -icon"
+basketball,basketball,SPORTS,"""basketball""+sport +ball +real +photo -toy -clipart -cartoon"

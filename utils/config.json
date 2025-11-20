@@ -11,17 +11,11 @@
   },
   "search": {
     "positive_keywords": [
-      "isolated",
-      "whole",
-      "single",
-      "white background"
+      "isolated"
+ 
     ],
     "negative_keywords": [
-      "group",
-      "multiple",
-      "crowd",
-      "collage",
-      "collection"
+  
     ],
     "comment": "positive_keywords: terms added to improve search quality. negative_keywords: terms to exclude from results"
   },

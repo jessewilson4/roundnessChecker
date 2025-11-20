@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Batch Processing - Image Roundness</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
+
 <body>
     <div class="container">
         <!-- Top Navigation -->
@@ -24,28 +26,34 @@
 
             <!-- Resume Incomplete Batches Section -->
             {% if incomplete_batches %}
-            <section class="resume-section" style="background: #fef3c7; border: 2px solid #f59e0b; border-radius: 12px; padding: 25px; margin-bottom: 30px;">
+            <section class="resume-section"
+                style="background: #fef3c7; border: 2px solid #f59e0b; border-radius: 12px; padding: 25px; margin-bottom: 30px;">
                 <h2 style="color: #92400e; margin-bottom: 15px;">⚠️ Resume Incomplete Batch</h2>
-                <p style="color: #78350f; margin-bottom: 20px;">You have {{ incomplete_batches|length }} incomplete batch{{ 'es' if incomplete_batches|length != 1 else '' }}. Select one to continue processing:</p>
-                
+                <p style="color: #78350f; margin-bottom: 20px;">You have {{ incomplete_batches|length }} incomplete
+                    batch{{ 'es' if incomplete_batches|length != 1 else '' }}. Select one to continue processing:</p>
+
                 <div style="display: grid; gap: 15px;">
                     {% for batch in incomplete_batches %}
-                    <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #fbbf24; display: flex; justify-content: space-between; align-items: center;">
+                    <div
+                        style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #fbbf24; display: flex; justify-content: space-between; align-items: center;">
                         <div style="flex: 1;">
                             <div style="font-weight: 600; font-size: 1.1rem; color: #1e293b; margin-bottom: 8px;">
                                 {{ batch.name }}
                             </div>
                             <div style="display: flex; gap: 20px; font-size: 0.9rem; color: #64748b; flex-wrap: wrap;">
-                                <span><strong>Status:</strong> 
-                                    <span class="status-badge status-{{ batch.status }}">{{ batch.status|capitalize }}</span>
+                                <span><strong>Status:</strong>
+                                    <span class="status-badge status-{{ batch.status }}">{{ batch.status|capitalize
+                                        }}</span>
                                 </span>
-                                <span><strong>Progress:</strong> {{ batch.completed_keywords }}/{{ batch.total_keywords }} ({{ batch.progress_percent|round(1) }}%)</span>
+                                <span><strong>Progress:</strong> {{ batch.completed_keywords }}/{{ batch.total_keywords
+                                    }} ({{ batch.progress_percent|round(1) }}%)</span>
                                 <span><strong>Current:</strong> "{{ batch.current_keyword }}"</span>
                                 <span><strong>Created:</strong> {{ batch.created_at[:10] }}</span>
                             </div>
                         </div>
                         <div style="display: flex; gap: 10px;">
-                            <button onclick="resumeBatch({{ batch.id }})" class="btn-primary" style="padding: 10px 20px;">
+                            <button onclick="resumeBatch({{ batch.id }})" class="btn-primary"
+                                style="padding: 10px 20px;">
                                 ▶️ Resume
                             </button>
                         </div>
@@ -69,14 +77,15 @@
                 <!-- Configuration (hidden until file uploaded) -->
                 <div id="configSection" style="display: none; margin-top: 30px;">
                     <h2>2. Configure Batch</h2>
-                    
+
                     <div class="config-grid">
                         <div class="config-item">
                             <label for="batchName">Batch Name:</label>
-                            <input type="text" id="batchName" placeholder="e.g., Kitchen Objects Study" class="input-field">
+                            <input type="text" id="batchName" placeholder="e.g., Kitchen Objects Study"
+                                class="input-field">
                         </div>
 
-                        <div class="config-item">
+                        <div class="config-item" id="columnSelectRow">
                             <label for="columnSelect">Keyword Column:</label>
                             <select id="columnSelect" class="input-field">
                                 <option value="">Select column...</option>
@@ -105,7 +114,7 @@
             <!-- Processing Section (shown during processing) -->
             <section id="processingSection" style="display: none; margin-top: 40px;">
                 <h2>Processing Status</h2>
-                
+
                 <div class="progress-container">
                     <div class="progress-header">
                         <span id="currentKeyword">Initializing...</span>
@@ -127,6 +136,7 @@
             <section id="keywordsSection" style="display: none; margin-top: 40px;">
                 <div class="section-header">
                     <h2>Keywords (<span id="totalKeywords">0</span>)</h2>
+                    <div id="statusSummary" style="font-size: 0.9rem; color: #64748b; margin: 10px 0;"></div>
                     <div class="filter-controls">
                         <input type="text" id="searchKeywords" placeholder="Search keywords..." class="search-input">
                         <select id="statusFilter" class="filter-dropdown">
@@ -137,37 +147,51 @@
                             <option value="incomplete">Incomplete</option>
                             <option value="failed">Failed</option>
                             <option value="paused">Paused</option>
+                            <option value="approved">Approved</option>
+                            <option value="pending_review">Pending Review</option>
+                            <option value="needs_more_images">Needs More Images</option>
                         </select>
                     </div>
                 </div>
-
-                <div class="keywords-table-wrapper">
-                    <table class="keywords-table">
-                        <thead>
-                            <tr>
-                                <th>Keyword</th>
-                                <th>Status</th>
-                                <th>Images</th>
-                                <th>Avg Score</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="keywordsTableBody">
-                            <!-- Populated by JavaScript -->
-                        </tbody>
-                    </table>
+                <div style="margin-top: 15px; display: flex; gap: 10px; align-items: center;">
+                    <button id="selectAllKeywords" class="btn-secondary" style="padding: 8px 16px;">Select All</button>
+                    <button id="deselectAllKeywords" class="btn-secondary" style="padding: 8px 16px;">Deselect
+                        All</button>
+                    <button id="bulkApproveBtn" class="btn-primary" style="display: none; padding: 8px 16px;">
+                        Approve Selected (<span id="selectedCount">0</span>)
+                    </button>
                 </div>
+    </div>
 
-                <!-- Pagination -->
-                <div class="pagination" id="pagination">
-                    <!-- Populated by JavaScript -->
-                </div>
-            </section>
-        </main>
+    <div class="keywords-table-wrapper">
+        <table class="keywords-table">
+            <thead>
+                <tr>
+                    <th style="width: 40px;"><input type="checkbox" id="selectAllCheckbox" style="cursor: pointer;">
+                    </th>
+                    <th>Keyword</th>
+                    <th>Status</th>
+                    <th>Images</th>
+                    <th>Avg Score</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="keywordsTableBody">
+                <!-- Populated by JavaScript -->
+            </tbody>
+        </table>
+    </div>
 
-        <footer class="footer">
-            <p>Batch Processing powered by AI Object Detection & Computer Vision</p>
-        </footer>
+    <!-- Pagination -->
+    <div class="pagination" id="pagination">
+        <!-- Populated by JavaScript -->
+    </div>
+    </section>
+    </main>
+
+    <footer class="footer">
+        <p>Batch Processing powered by AI Object Detection & Computer Vision</p>
+    </footer>
     </div>
 
     <script src="{{ url_for('static', filename='js/batch.js') }}"></script>
@@ -175,30 +199,30 @@
         // Resume batch function
         async function resumeBatch(batchId) {
             if (!confirm('Resume this batch from where it left off?')) return;
-            
+
             try {
                 // Start the batch
                 const response = await fetch(`/batch/${batchId}/start`, {
                     method: 'POST'
                 });
-                
+
                 const data = await response.json();
-                
+
                 if (data.success) {
                     // Set current batch ID
                     currentBatchId = batchId;
-                    
+
                     // Hide resume section and upload section
                     const resumeSection = document.querySelector('.resume-section');
                     if (resumeSection) resumeSection.style.display = 'none';
-                    
+
                     const uploadSection = document.querySelector('.upload-section');
                     if (uploadSection) uploadSection.style.display = 'none';
-                    
+
                     // Show processing section
                     document.getElementById('processingSection').style.display = 'block';
                     document.getElementById('keywordsSection').style.display = 'block';
-                    
+
                     // Start polling for status
                     startStatusPolling();
                 } else {
@@ -210,4 +234,5 @@
         }
     </script>
 </body>
+
 </html>

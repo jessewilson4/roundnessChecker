@@ -1,0 +1,87 @@
+# UAIPCS Specification v1.3
+
+## 1. INTRODUCTION
+This document defines the UAIPCS (Universal AI Python Code Specification) standard for Python project headers, ensuring consistency, parseability, and compliance with automated validation tools.
+
+## 2. PURPOSE
+UAIPCS headers allow AI tools and validators to reliably read metadata about Python files, including dependencies, functions, classes, references, performance notes, and side effects.
+
+## 3. HEADER FORMAT
+
+**CRITICAL SYNTAX RULE:**
+- Only the **delimiters** (`# === UAIPCS START ===` and `# === UAIPCS END ===`) use `#`.
+- **Content lines must NOT start with `#`**.
+
+**Header Placement:**
+- Must be at the **top of the file** before any imports or code.
+- No blank lines between the delimiter and content.
+
+**Whitespace Rules:**
+- Indent list items with **exactly two spaces** before the dash.
+
+**Header Fields:**
+```python
+# === UAIPCS START ===
+file: <filename.py>
+purpose: <brief description>
+deps: [@dependency:module, ...]
+funcs:
+  - function_name(arg:type, ...) -> return_type  # side_effect: <description>
+classes:
+  - ClassName(arg:type, ...)  # description
+refs:
+  - path/to/file.py::ClassOrFunc
+notes: key=value|key=value, ...
+# === UAIPCS END ===
+```
+
+## 4. FUNCTIONS AND CLASSES
+- Include only public, relevant functions and classes.
+- Use `# side_effect:` or `# no_side_effect` comments on function lines.
+
+## 5. DEPENDENCIES
+- Use `@` symbol to indicate the entity type (e.g., `@flask:framework`).
+- List all dependencies required by the file.
+
+## 6. NOTES FIELD FORMAT
+- Use `|` to separate multiple metrics.
+- Use `=` for key-value pairs within metrics.
+- **Correct Example:** `perf=cold=5s|hot=<1s, persist=durable`
+- **Incorrect Example:** `perf: cold=5s, hot=2s`
+
+## 7. REFS FORMAT
+- List references with exactly **two spaces** before the dash.
+- Example:
+```python
+  - utils/database.py::Database
+  - utils/edge_detection.py::RoundnessAnalyzer
+```
+
+## 8. COMMON MISTAKES TO AVOID
+1. Commenting out header lines (only delimiters use `#`).
+2. Using tabs instead of two spaces for indentation.
+3. Forgetting side_effect comments on function lines.
+4. Placing header after imports.
+5. Including private functions in `funcs:` list.
+6. Using inconsistent symbol prefixes (mixing `@entity` and `entity`).
+
+## 9. EXAMPLE HEADER
+```python
+# === UAIPCS START ===
+file: app.py
+purpose: Flask web application for image roundness analysis via Google Custom Search
+deps: [@flask:framework, @google_search_api:service/external, @database:storage/sqlite, @owlvit_model:model/huggingface, @sam_model:model/huggingface]
+funcs:
+  - get_roundness_score(composite_percentage:float) -> int  # no_side_effect
+  - get_score_description(score:int) -> tuple  # no_side_effect
+  - cleanup_memory() -> None  # side_effect: garbage collection and GPU cache clear
+refs:
+  - utils/database.py::Database
+  - utils/edge_detection.py::RoundnessAnalyzer
+  - templates/index.html
+notes: perf=cold=3-5s|hot=<1s, persist=durable, concur=not_thread_safe, volatiledeps=[@google_api]
+# === UAIPCS END ===
+```
+
+## 10. VERSION HISTORY
+- v1.3: Corrected header syntax rules, clarified notes formatting, added full example and common mistakes section.

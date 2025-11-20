@@ -171,7 +171,10 @@ class Database:
         filtered_results: List[Dict],
         outliers: List[Dict],
         stats: Dict,
-        batch_id: Optional[int] = None
+        batch_id: Optional[int] = None,
+        detection_keyword: Optional[str] = None,
+        search_phrase: Optional[str] = None,
+        category: Optional[str] = None
     ) -> int:
         """
         Save complete search results to database.
@@ -187,19 +190,29 @@ class Database:
         Returns:
             Search ID
         """
+        # Default to search_term if new fields not provided (backward compatibility)
+        if detection_keyword is None:
+            detection_keyword = search_term
+        if search_phrase is None:
+            search_phrase = search_term
+        
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Insert search record
+        # Insert search record with new dual-keyword fields
         cursor.execute('''
             INSERT INTO searches (
-                search_term, num_images, avg_circularity, avg_aspect_ratio,
+                search_term, detection_keyword, search_phrase, category,
+                num_images, avg_circularity, avg_aspect_ratio,
                 avg_eccentricity, avg_solidity, avg_convexity,
                 avg_composite, std_composite, min_composite, max_composite,
                 median_composite, outliers_removed, results_json, batch_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             search_term,
+            detection_keyword,
+            search_phrase,
+            category,
             len(filtered_results),
             stats['circularity']['mean'],
             stats['aspect_ratio']['mean'],
@@ -280,12 +293,14 @@ class Database:
         
         cursor.execute('''
             SELECT 
-                id, search_term, timestamp, num_images,
-                avg_composite, std_composite, median_composite,
-                avg_circularity, avg_aspect_ratio, avg_eccentricity,
-                avg_solidity, avg_convexity, outliers_removed
-            FROM searches
-            ORDER BY timestamp DESC
+                s.id, s.search_term, s.timestamp, s.num_images,
+                s.avg_composite, s.std_composite, s.median_composite,
+                s.avg_circularity, s.avg_aspect_ratio, s.avg_eccentricity,
+                s.avg_solidity, s.avg_convexity, s.outliers_removed,
+                s.batch_id, b.name as batch_name
+            FROM searches s
+            LEFT JOIN batches b ON s.batch_id = b.id
+            ORDER BY s.timestamp DESC
             LIMIT ?
         ''', (limit,))
         
@@ -307,7 +322,9 @@ class Database:
                 'avg_eccentricity': row[9],
                 'avg_solidity': row[10],
                 'avg_convexity': row[11],
-                'outliers_removed': row[12]
+                'outliers_removed': row[12],
+                'batch_id': row[13],
+                'batch_name': row[14]
             })
         
         return history
@@ -385,6 +402,7 @@ class Database:
         status: str = None,
         images_valid: int = None,
         images_rejected: int = None,
+        images_required: int = None,
         pagination_offset: int = None,
         batch_id: int = None
     ) -> None:
@@ -396,6 +414,7 @@ class Database:
             status: Status ('pending_review', 'approved', 'needs_more_images')
             images_valid: Count of valid images
             images_rejected: Count of rejected images
+            images_required: Target number of images
             pagination_offset: Resume point for next fetch
             batch_id: Associated batch ID
         """
@@ -420,6 +439,9 @@ class Database:
             if images_rejected is not None:
                 updates.append('images_rejected = ?')
                 params.append(images_rejected)
+            if images_required is not None:
+                updates.append('images_required = ?')
+                params.append(images_required)
             if pagination_offset is not None:
                 updates.append('pagination_offset = ?')
                 params.append(pagination_offset)
@@ -439,14 +461,15 @@ class Database:
             cursor.execute('''
                 INSERT INTO keyword_status (
                     keyword, batch_id, status, images_valid, images_rejected, 
-                    pagination_offset, last_processed
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    images_required, pagination_offset, last_processed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 keyword,
                 batch_id,
                 status or 'pending_review',
                 images_valid or 0,
                 images_rejected or 0,
+                images_required or 20,  # Default to 20 if not specified
                 pagination_offset or 0,
                 datetime.now().isoformat()
             ))
@@ -697,24 +720,40 @@ class Database:
         return deleted_count
     
     
-    def create_batch(self, name: str, keywords: List[str], images_per_keyword: int) -> int:
-        """Create a new batch for bulk processing"""
+    def create_batch(self, name: str, keywords: List, images_per_keyword: int, category: str = None, format_version: str = 'v2') -> int:
+        """
+        Create a new batch for bulk processing
+        
+        Args:
+            name: Batch name
+            keywords: List of keywords (v1) or list of dicts with keyword data (v2)
+            images_per_keyword: Number of images to fetch per keyword
+            category: Optional category for grouping
+            format_version: 'v1' (simple keywords) or 'v2' (dual-keyword with metadata)
+        """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
+        # For v2, extract just the keywords for total count
+        if format_version == 'v2' and isinstance(keywords, list) and len(keywords) > 0 and isinstance(keywords[0], dict):
+            keyword_list = [kw.get('keyword', kw) for kw in keywords]
+        else:
+            keyword_list = keywords
+        
         cursor.execute('''
-            INSERT INTO batches (name, total_keywords, images_per_keyword, keywords_json)
-            VALUES (?, ?, ?, ?)
-        ''', (name, len(keywords), images_per_keyword, json.dumps(keywords)))
+            INSERT INTO batches (name, total_keywords, images_per_keyword, keywords_json, category, format_version)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (name, len(keyword_list), images_per_keyword, json.dumps(keywords), category, format_version))
         
         batch_id = cursor.lastrowid
         conn.commit()
         conn.close()
         
         # Initialize keyword status for each keyword in batch
-        for keyword in keywords:
+        for kw in keyword_list:
+            keyword_str = kw.get('keyword', kw) if isinstance(kw, dict) else kw
             self.update_keyword_status(
-                keyword=keyword,
+                keyword=keyword_str,
                 status='pending_review',
                 images_valid=0,
                 images_rejected=0,
@@ -756,6 +795,38 @@ class Database:
         }
     
     
+    def get_incomplete_batches(self) -> List[Dict]:
+        """Get all batches that are not complete"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, name, created_at, total_keywords, completed_keywords, 
+                   status, current_keyword_index, images_per_keyword
+            FROM batches
+            WHERE status != 'complete'
+            ORDER BY created_at DESC
+        ''')
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        batches = []
+        for row in rows:
+            batches.append({
+                'id': row[0],
+                'name': row[1],
+                'created_at': row[2],
+                'total_keywords': row[3],
+                'completed_keywords': row[4],
+                'status': row[5],
+                'current_keyword_index': row[6],
+                'images_per_keyword': row[7]
+            })
+        
+        return batches
+    
+    
     def update_batch_progress(self, batch_id: int, current_index: int, completed: int, status: str = None):
         """Update batch progress"""
         conn = sqlite3.connect(self.db_path)
@@ -776,6 +847,19 @@ class Database:
         
         conn.commit()
         conn.close()
+    
+    
+    def update_batch_status(self, batch_id: int, status: str, current_index: int = None, completed: int = None):
+        """Update batch status (alias for update_batch_progress with different parameter order)"""
+        if current_index is None or completed is None:
+            # Status-only update
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('UPDATE batches SET status = ? WHERE id = ?', (status, batch_id))
+            conn.commit()
+            conn.close()
+        else:
+            self.update_batch_progress(batch_id, current_index, completed, status)
     
     
     def get_batch_searches(self, batch_id: int) -> List[Dict]:

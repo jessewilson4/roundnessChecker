@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,6 +8,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
+
 <body>
     <div class="container">
         <!-- Top Navigation -->
@@ -24,19 +26,16 @@
             <div class="search-bar-results">
                 <form method="POST" action="{{ url_for('search') }}" class="search-form-results">
                     <div class="input-group-results">
-                        <input 
-                            type="text" 
-                            name="search_term"
-                            value="{{ search_term }}"
-                            placeholder="Search for objects..." 
-                            class="search-input-results"
-                            required>
+                        <input type="text" name="search_term" value="{{ search_term }}"
+                            placeholder="Search for objects..." class="search-input-results" required>
                         <select name="num_images" class="image-count-select-results">
-                            {% for opt in config.api.images_dropdown_options %}
-                            <option value="{{ opt }}" {% if num_images == opt %}selected{% endif %}>{{ opt }} images</option>
+                            {% for opt in [10, 20, 30, 40, 50] %}
+                            <option value="{{ opt }}" {% if num_images==opt %}selected{% endif %}>{{ opt }} images
+                            </option>
                             {% endfor %}
                         </select>
-                        <button type="button" class="clear-button" onclick="clearSearch()" title="Clear search">×</button>
+                        <button type="button" class="clear-button" onclick="clearSearch()"
+                            title="Clear search">×</button>
                         <button type="submit" class="search-button-results">Search</button>
                     </div>
                 </form>
@@ -54,11 +53,51 @@
             </div>
             {% endif %}
 
+            {% if batch_context %}
+            <div
+                style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong>Batch:</strong> {{ batch_context.batch_name }} |
+                        <strong>Progress:</strong> Keyword {{ batch_context.current_position }} of {{
+                        batch_context.total_keywords }}
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        {% if batch_context.prev_search_id %}
+                        <a href="{{ url_for('load_search', search_id=batch_context.prev_search_id) }}"
+                            class="btn-secondary">← Previous Keyword</a>
+                        {% else %}
+                        <button class="btn-secondary" disabled style="opacity: 0.5;">← Previous Keyword</button>
+                        {% endif %}
+
+                        {% if batch_context.next_search_id %}
+                        <a href="{{ url_for('load_search', search_id=batch_context.next_search_id) }}"
+                            class="btn-secondary">Next Keyword →</a>
+                        {% else %}
+                        <button class="btn-secondary" disabled style="opacity: 0.5;">Next Keyword →</button>
+                        {% endif %}
+
+                        <a href="{{ url_for('batch_status', batch_id=batch_context.batch_id) }}"
+                            class="btn-secondary">Back to Batch</a>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
             <!-- Summary Section -->
             <section class="summary-section">
-                <h2>Results for "{{ search_term }}"</h2>
-                <p class="timestamp">Analysis completed: {{ timestamp }}</p>
-                
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <div>
+                        <h2>Results for "{{ search_term }}"</h2>
+                        <p class="timestamp">Analysis completed: {{ timestamp }}</p>
+                    </div>
+                    <div>
+                        <button id="approveWordBtn" class="btn-primary" style="padding: 12px 24px; font-size: 1.1rem;">
+                            ✓ Approve Word
+                        </button>
+                    </div>
+                </div>
+
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-value">{{ stats.total_analyzed }}</div>
@@ -73,16 +112,19 @@
                         <div class="stat-label">Outliers Removed</div>
                     </div>
                     <div class="stat-card highlight">
-                        <div class="stat-value" style="font-size: 3rem;">{{ average_roundness_score }}<span style="font-size: 1.5rem; color: #64748b;">/50</span></div>
+                        <div class="stat-value" style="font-size: 3rem;">{{ average_roundness_score }}<span
+                                style="font-size: 1.5rem; color: #64748b;">/50</span></div>
                         <div class="stat-label">Roundness Score</div>
-                        <div class="stat-detail" style="color: {{ average_score_color }}; font-weight: 600;">{{ average_score_description }}</div>
+                        <div class="stat-detail" style="color: {{ average_score_color }}; font-weight: 600;">{{
+                            average_score_description }}</div>
                     </div>
                 </div>
 
                 <div class="stats-details">
                     <div class="detail-row">
                         <span class="detail-label">Composite Range:</span>
-                        <span class="detail-value">{{ "%.1f"|format(stats.composite.min) }}% - {{ "%.1f"|format(stats.composite.max) }}%</span>
+                        <span class="detail-value">{{ "%.1f"|format(stats.composite.min) }}% - {{
+                            "%.1f"|format(stats.composite.max) }}%</span>
                     </div>
                     <div class="detail-row">
                         <span class="detail-label">Composite Median:</span>
@@ -90,7 +132,8 @@
                     </div>
                     <div class="detail-row">
                         <span class="detail-label">Composite Average:</span>
-                        <span class="detail-value">{{ "%.1f"|format(stats.composite.mean) }}% (±{{ "%.1f"|format(stats.composite.std) }}%)</span>
+                        <span class="detail-value">{{ "%.1f"|format(stats.composite.mean) }}% (±{{
+                            "%.1f"|format(stats.composite.std) }}%)</span>
                     </div>
                     <div class="detail-row">
                         <span class="detail-label">Avg Circularity:</span>
@@ -133,9 +176,12 @@
                         <h2>All {{ stats.total_valid }} Results</h2>
                     </div>
                     <div>
-                        <button id="selectAllResults" class="btn-secondary" style="margin-right: 10px;">Select All</button>
-                        <button id="deselectAllResults" class="btn-secondary" style="margin-right: 10px;">Deselect All</button>
-                        <a href="{{ url_for('export_search_csv', search_id=search_id) }}" class="btn-primary" style="text-decoration: none;">
+                        <button id="selectAllResults" class="btn-secondary" style="margin-right: 10px;">Select
+                            All</button>
+                        <button id="deselectAllResults" class="btn-secondary" style="margin-right: 10px;">Deselect
+                            All</button>
+                        <a href="{{ url_for('export_search_csv', search_id=search_id) }}" class="btn-primary"
+                            style="text-decoration: none;">
                             📊 Export CSV
                         </a>
                         <button id="deleteSelectedResults" class="btn-danger" style="display: none; margin-left: 10px;">
@@ -143,16 +189,17 @@
                         </button>
                     </div>
                 </div>
-                
+
                 <!-- Filter Controls -->
                 <div style="margin: 20px 0; display: flex; align-items: center; gap: 10px;">
-                    <label for="scoreFilter" style="font-weight: 600; color: #1e293b;">Filter by Roundness Score:</label>
+                    <label for="scoreFilter" style="font-weight: 600; color: #1e293b;">Filter by Roundness
+                        Score:</label>
                     <select id="scoreFilter" class="filter-dropdown">
                         <option value="all">Show All</option>
                     </select>
                     <span id="filterCount" style="color: #64748b; font-size: 0.9rem;"></span>
                 </div>
-                
+
                 <div class="table-wrapper">
                     <table class="results-table sortable-table" id="resultsTable">
                         <thead>
@@ -163,39 +210,42 @@
                                 <th class="sortable" data-sort="rank">Rank <span class="sort-arrow">↕</span></th>
                                 <th>Image</th>
                                 <th class="sortable" data-sort="score">Score <span class="sort-arrow">↕</span></th>
-                                <th class="sortable" data-sort="composite">Composite <span class="sort-arrow">↕</span></th>
-                                <th class="sortable" data-sort="circularity">Circularity <span class="sort-arrow">↕</span></th>
-                                <th class="sortable" data-sort="aspect_ratio">Aspect Ratio <span class="sort-arrow">↕</span></th>
-                                <th class="sortable" data-sort="eccentricity">Eccentricity <span class="sort-arrow">↕</span></th>
-                                <th class="sortable" data-sort="solidity">Solidity <span class="sort-arrow">↕</span></th>
-                                <th class="sortable" data-sort="convexity">Convexity <span class="sort-arrow">↕</span></th>
+                                <th class="sortable" data-sort="composite">Composite <span class="sort-arrow">↕</span>
+                                </th>
+                                <th class="sortable" data-sort="circularity">Circularity <span
+                                        class="sort-arrow">↕</span></th>
+                                <th class="sortable" data-sort="aspect_ratio">Aspect Ratio <span
+                                        class="sort-arrow">↕</span></th>
+                                <th class="sortable" data-sort="eccentricity">Eccentricity <span
+                                        class="sort-arrow">↕</span></th>
+                                <th class="sortable" data-sort="solidity">Solidity <span class="sort-arrow">↕</span>
+                                </th>
+                                <th class="sortable" data-sort="convexity">Convexity <span class="sort-arrow">↕</span>
+                                </th>
                                 <th class="sortable" data-sort="area">Area (px²) <span class="sort-arrow">↕</span></th>
                                 <th>Details</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for result in all_results %}
-                            <tr data-rank="{{ result.rank }}" 
-                                data-score="{{ result.roundness_score }}"
-                                data-composite="{{ result.composite }}"
-                                data-circularity="{{ result.circularity }}"
+                            <tr data-rank="{{ result.rank }}" data-score="{{ result.roundness_score }}"
+                                data-composite="{{ result.composite }}" data-circularity="{{ result.circularity }}"
                                 data-aspect_ratio="{{ result.aspect_ratio }}"
-                                data-eccentricity="{{ result.eccentricity }}"
-                                data-solidity="{{ result.solidity }}"
-                                data-convexity="{{ result.convexity }}"
-                                data-area="{{ result.area }}">
+                                data-eccentricity="{{ result.eccentricity }}" data-solidity="{{ result.solidity }}"
+                                data-convexity="{{ result.convexity }}" data-area="{{ result.area }}">
                                 <td style="text-align: center;">
-                                    <input type="checkbox" class="result-checkbox" data-pexels-id="{{ result.pexels_id }}" style="cursor: pointer;">
+                                    <input type="checkbox" class="result-checkbox"
+                                        data-pexels-id="{{ result.pexels_id }}" style="cursor: pointer;">
                                 </td>
                                 <td class="rank-cell">{{ result.rank }}</td>
                                 <td class="image-cell">
                                     <div class="image-preview-trigger">
-                                        <img src="{{ url_for('serve_image', filename=result.thumbnail_path) }}" 
-                                             alt="Thumbnail" 
-                                             class="thumbnail-img">
+                                        <img src="{{ url_for('serve_image', filename=result.thumbnail_path) }}"
+                                            alt="Thumbnail" class="thumbnail-img">
                                         <div class="photographer-credit">
                                             <span class="source-badge">{{ result.source|upper }}</span>
-                                            Photo by <a href="{{ result.photographer_url }}" target="_blank">{{ result.photographer }}</a>
+                                            Photo by <a href="{{ result.photographer_url }}" target="_blank">{{
+                                                result.photographer }}</a>
                                         </div>
                                     </div>
                                 </td>
@@ -218,14 +268,15 @@
                                 <td>{{ "%.1f"|format(result.convexity * 100) }}%</td>
                                 <td>{{ "%.0f"|format(result.area) }}</td>
                                 <td>
-                                    <button class="btn-details" onclick="showDetails('{{ result.pexels_id }}')">View</button>
+                                    <button class="btn-details"
+                                        onclick="showDetails('{{ result.pexels_id }}')">View</button>
                                 </td>
                             </tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
-                
+
                 <!-- Bottom action buttons -->
                 <div style="margin-top: 20px; display: flex; justify-content: flex-end;">
                     <button id="deleteSelectedResultsBottom" class="btn-danger" style="display: none;">
@@ -239,7 +290,9 @@
             {% if outliers %}
             <section class="outliers-section">
                 <details>
-                    <summary><h3>⚠ {{ outliers|length }} Outliers Detected</h3></summary>
+                    <summary>
+                        <h3>⚠ {{ outliers|length }} Outliers Detected</h3>
+                    </summary>
                     <p class="outliers-description">
                         Statistical outliers removed using IQR method for more accurate analysis.
                     </p>
@@ -258,8 +311,8 @@
                                 {% for outlier in outliers %}
                                 <tr class="outlier-row">
                                     <td>
-                                        <img src="{{ url_for('serve_image', filename=outlier.thumbnail_path) }}" 
-                                             alt="Thumb" class="tiny-thumb">
+                                        <img src="{{ url_for('serve_image', filename=outlier.thumbnail_path) }}"
+                                            alt="Thumb" class="tiny-thumb">
                                     </td>
                                     <td>{{ "%.1f"|format(outlier.composite * 100) }}%</td>
                                     <td>{{ "%.1f"|format(outlier.circularity * 100) }}%</td>
@@ -281,7 +334,8 @@
 
         <footer class="footer">
             <div style="display: flex; justify-content: space-between; align-items: center;">
-                <p>Powered by Pexels, Unsplash & Pixabay APIs | OWL-ViT Object Detection | SAM Segmentation | Edge Analysis</p>
+                <p>Powered by Pexels, Unsplash & Pixabay APIs | OWL-ViT Object Detection | SAM Segmentation | Edge
+                    Analysis</p>
                 {% if search_id %}
                 <button id="deleteSearchBtn" class="btn-danger" style="padding: 8px 16px;">
                     Delete This Search
@@ -301,20 +355,20 @@
 
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <script>
-        const chartData = {{ chart_data|tojson }};
-        const allResults = {{ all_results|tojson }};
+        const chartData = {{ chart_data| tojson }};
+        const allResults = {{ all_results| tojson }};
         const searchTerm = "{{ search_term }}";
         const searchId = {{ search_id }};
-        
+
         let currentFilter = 'all';
         let distributionChart = null;
-        
+
         // Create distribution histogram
         if (chartData && chartData.histogram) {
             const ctx = document.getElementById('distributionChart');
             if (ctx) {
                 const hist = chartData.histogram;
-                
+
                 // Populate dropdown with ranges that have data
                 const scoreFilter = document.getElementById('scoreFilter');
                 hist.bin_labels.forEach((label, index) => {
@@ -325,7 +379,7 @@
                         scoreFilter.appendChild(option);
                     }
                 });
-                
+
                 distributionChart = new Chart(ctx, {
                     type: 'bar',
                     data: {
@@ -382,14 +436,14 @@
                 });
             }
         }
-        
+
         // Filter function
         function filterByScoreRange(range) {
             currentFilter = range;
             const tbody = document.querySelector('#resultsTable tbody');
             const rows = tbody.querySelectorAll('tr');
             let visibleCount = 0;
-            
+
             if (range === 'all') {
                 rows.forEach(row => {
                     row.style.display = '';
@@ -398,7 +452,7 @@
             } else {
                 // Parse range like "1-5" or "46-50"
                 const [min, max] = range.split('-').map(Number);
-                
+
                 rows.forEach(row => {
                     const score = parseInt(row.dataset.score);
                     if (score >= min && score <= max) {
@@ -408,19 +462,19 @@
                         row.style.display = 'none';
                     }
                 });
-                
+
                 // Highlight the selected bar
                 if (distributionChart) {
                     const hist = chartData.histogram;
                     const selectedIndex = hist.bin_labels.indexOf(range);
-                    const colors = hist.bin_labels.map((label, index) => 
+                    const colors = hist.bin_labels.map((label, index) =>
                         index === selectedIndex ? 'rgba(239, 68, 68, 0.7)' : 'rgba(59, 130, 246, 0.7)'
                     );
                     distributionChart.data.datasets[0].backgroundColor = colors;
                     distributionChart.update();
                 }
             }
-            
+
             // Update filter count
             const filterCount = document.getElementById('filterCount');
             if (range === 'all') {
@@ -429,31 +483,31 @@
                 filterCount.textContent = `Showing ${visibleCount} of ${rows.length} images`;
             }
         }
-        
+
         // Dropdown change handler
-        document.getElementById('scoreFilter').addEventListener('change', function() {
+        document.getElementById('scoreFilter').addEventListener('change', function () {
             const range = this.value;
             filterByScoreRange(range);
-            
+
             // Reset bar colors if "Show All"
             if (range === 'all' && distributionChart) {
                 distributionChart.data.datasets[0].backgroundColor = 'rgba(59, 130, 246, 0.7)';
                 distributionChart.update();
             }
         });
-        
+
         // Table sorting functionality
-        let currentSort = {column: 'rank', ascending: true};
-        
+        let currentSort = { column: 'rank', ascending: true };
+
         document.querySelectorAll('.sortable').forEach(header => {
             header.style.cursor = 'pointer';
-            header.addEventListener('click', function() {
+            header.addEventListener('click', function () {
                 const sortKey = this.dataset.sort;
                 const ascending = currentSort.column === sortKey ? !currentSort.ascending : true;
-                currentSort = {column: sortKey, ascending: ascending};
-                
+                currentSort = { column: sortKey, ascending: ascending };
+
                 sortTable(sortKey, ascending);
-                
+
                 // Update sort arrows
                 document.querySelectorAll('.sort-arrow').forEach(arrow => {
                     arrow.textContent = '↕';
@@ -464,59 +518,95 @@
                 arrow.style.opacity = '1';
             });
         });
-        
+
         function sortTable(column, ascending) {
             const tbody = document.querySelector('#resultsTable tbody');
             const rows = Array.from(tbody.querySelectorAll('tr'));
-            
+
             rows.sort((a, b) => {
                 let aVal = parseFloat(a.dataset[column]);
                 let bVal = parseFloat(b.dataset[column]);
-                
+
                 if (isNaN(aVal)) aVal = 0;
                 if (isNaN(bVal)) bVal = 0;
-                
+
                 return ascending ? aVal - bVal : bVal - aVal;
             });
-            
+
             // Clear and re-append sorted rows
             tbody.innerHTML = '';
             rows.forEach(row => tbody.appendChild(row));
         }
-        
+
         function clearSearch() {
             document.querySelector('.search-input-results').value = '';
         }
-        
+
         function deleteResult(pexelsId) {
-            if (!confirm('Delete this result? This will remove the image and recalculate statistics.')) {
+            if (!confirm('Reject this image? This will mark it as rejected and update the keyword status.')) {
                 return;
             }
-            
-            fetch('/delete_result', {
+
+            // Find the image_id from the results data
+            const result = allResults.find(r => r.pexels_id === pexelsId);
+            if (!result) {
+                alert('Image not found');
+                return;
+            }
+
+            fetch(`/api/image/${result.image_id}/reject`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
                     search_id: searchId,
-                    pexels_id: pexelsId
+                    reason: 'user_rejected'
                 })
             })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    alert('Result deleted successfully!');
-                    location.reload(); // Reload to show updated results
-                } else {
-                    alert('Error: ' + data.error);
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Image rejected successfully!');
+                        location.reload(); // Reload to show updated results
+                    } else {
+                        alert('Error: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    alert('Error rejecting image: ' + error);
+                });
+        }
+
+        // Approve word functionality
+        const approveWordBtn = document.getElementById('approveWordBtn');
+        if (approveWordBtn) {
+            approveWordBtn.addEventListener('click', async function () {
+                if (!confirm(`Approve "${searchTerm}"? This marks all images as approved for this keyword.`)) {
+                    return;
                 }
-            })
-            .catch(error => {
-                alert('Error deleting result: ' + error);
+
+                try {
+                    const response = await fetch(`/api/keyword/${encodeURIComponent(searchTerm)}/approve`, {
+                        method: 'POST'
+                    });
+
+                    const data = await response.json();
+
+                    if (data.success) {
+                        approveWordBtn.textContent = '✓ Approved';
+                        approveWordBtn.style.backgroundColor = '#10b981';
+                        approveWordBtn.disabled = true;
+                        alert('Keyword approved successfully!');
+                    } else {
+                        alert('Error: ' + data.error);
+                    }
+                } catch (error) {
+                    alert('Error approving keyword: ' + error.message);
+                }
             });
         }
-        
+
         // Bulk delete for All Results section
         const selectAllResultsCheckbox = document.getElementById('selectAllResultsCheckbox');
         const selectAllResultsBtn = document.getElementById('selectAllResults');
@@ -525,86 +615,86 @@
         const deleteSelectedResultsBtnBottom = document.getElementById('deleteSelectedResultsBottom');
         const selectedResultsCountSpan = document.getElementById('selectedResultsCount');
         const selectedResultsCountSpanBottom = document.getElementById('selectedResultsCountBottom');
-        
+
         function updateDeleteResultsButton() {
             const checkboxes = document.querySelectorAll('.result-checkbox:checked');
             const count = checkboxes.length;
-            
+
             // Update both top and bottom buttons
             if (selectedResultsCountSpan) selectedResultsCountSpan.textContent = count;
             if (selectedResultsCountSpanBottom) selectedResultsCountSpanBottom.textContent = count;
             if (deleteSelectedResultsBtn) deleteSelectedResultsBtn.style.display = count > 0 ? 'block' : 'none';
             if (deleteSelectedResultsBtnBottom) deleteSelectedResultsBtnBottom.style.display = count > 0 ? 'block' : 'none';
         }
-        
+
         if (selectAllResultsCheckbox) {
-            selectAllResultsCheckbox.addEventListener('change', function() {
+            selectAllResultsCheckbox.addEventListener('change', function () {
                 const checkboxes = document.querySelectorAll('.result-checkbox');
                 checkboxes.forEach(cb => cb.checked = this.checked);
                 updateDeleteResultsButton();
             });
         }
-        
+
         if (selectAllResultsBtn) {
-            selectAllResultsBtn.addEventListener('click', function() {
+            selectAllResultsBtn.addEventListener('click', function () {
                 const checkboxes = document.querySelectorAll('.result-checkbox');
                 checkboxes.forEach(cb => cb.checked = true);
                 if (selectAllResultsCheckbox) selectAllResultsCheckbox.checked = true;
                 updateDeleteResultsButton();
             });
         }
-        
+
         if (deselectAllResultsBtn) {
-            deselectAllResultsBtn.addEventListener('click', function() {
+            deselectAllResultsBtn.addEventListener('click', function () {
                 const checkboxes = document.querySelectorAll('.result-checkbox');
                 checkboxes.forEach(cb => cb.checked = false);
                 if (selectAllResultsCheckbox) selectAllResultsCheckbox.checked = false;
                 updateDeleteResultsButton();
             });
         }
-        
+
         document.querySelectorAll('.result-checkbox').forEach(checkbox => {
             checkbox.addEventListener('change', updateDeleteResultsButton);
         });
-        
+
         if (deleteSelectedResultsBtn) {
-            deleteSelectedResultsBtn.addEventListener('click', async function() {
+            deleteSelectedResultsBtn.addEventListener('click', async function () {
                 await handleBulkDelete();
             });
         }
-        
+
         if (deleteSelectedResultsBtnBottom) {
-            deleteSelectedResultsBtnBottom.addEventListener('click', async function() {
+            deleteSelectedResultsBtnBottom.addEventListener('click', async function () {
                 await handleBulkDelete();
             });
         }
-        
+
         async function handleBulkDelete() {
             const checkboxes = document.querySelectorAll('.result-checkbox:checked');
             const pexelsIds = Array.from(checkboxes).map(cb => cb.dataset.pexelsId);
-            
+
             if (pexelsIds.length === 0) return;
-            
+
             const confirmMsg = `Are you sure you want to delete ${pexelsIds.length} result${pexelsIds.length > 1 ? 's' : ''}? This will recalculate statistics.`;
             if (!confirm(confirmMsg)) return;
-            
+
             try {
                 // Delete each result sequentially
                 let successCount = 0;
                 for (const pexelsId of pexelsIds) {
                     const response = await fetch('/delete_result', {
                         method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             search_id: searchId,
                             pexels_id: pexelsId
                         })
                     });
-                    
+
                     const result = await response.json();
                     if (result.success) successCount++;
                 }
-                
+
                 if (successCount > 0) {
                     alert(`Successfully deleted ${successCount} result${successCount > 1 ? 's' : ''}! Reloading...`);
                     window.location.reload();
@@ -615,15 +705,15 @@
                 alert('Error deleting results: ' + error.message);
             }
         }
-        
+
         // Delete entire search
         const deleteSearchBtn = document.getElementById('deleteSearchBtn');
         if (deleteSearchBtn) {
-            deleteSearchBtn.addEventListener('click', async function() {
+            deleteSearchBtn.addEventListener('click', async function () {
                 if (!confirm('Are you sure you want to delete this entire search and all its results?')) {
                     return;
                 }
-                
+
                 try {
                     const response = await fetch('/delete_searches', {
                         method: 'POST',
@@ -632,9 +722,9 @@
                         },
                         body: JSON.stringify({ search_ids: [searchId] })
                     });
-                    
+
                     const result = await response.json();
-                    
+
                     if (result.success) {
                         alert('Search deleted successfully!');
                         window.location.href = '/history';
@@ -646,6 +736,67 @@
                 }
             });
         }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function (e) {
+            // Don't trigger if user is typing in an input field
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
+                return;
+            }
+
+            // A or Enter: Approve word
+            if ((e.key === 'a' || e.key === 'A' || e.key === 'Enter') && approveWordBtn && !approveWordBtn.disabled) {
+                e.preventDefault();
+                approveWordBtn.click();
+            }
+
+            {% if batch_context %}
+            // N: Next keyword
+            if (e.key === 'n' || e.key === 'N') {
+                e.preventDefault();
+                {% if batch_context.next_search_id %}
+                window.location.href = '{{ url_for("load_search", search_id=batch_context.next_search_id) }}';
+                {% endif %}
+            }
+
+            // P: Previous keyword
+            if (e.key === 'p' || e.key === 'P') {
+                e.preventDefault();
+                {% if batch_context.prev_search_id %}
+                window.location.href = '{{ url_for("load_search", search_id=batch_context.prev_search_id) }}';
+                {% endif %}
+            }
+
+            // B: Back to batch
+            if (e.key === 'b' || e.key === 'B') {
+                e.preventDefault();
+                window.location.href = '{{ url_for("batch_status", batch_id=batch_context.batch_id) }}';
+            }
+            {% endif %}
+
+            // ?: Show keyboard shortcuts help
+            if (e.key === '?') {
+                e.preventDefault();
+                showKeyboardHelp();
+            }
+        });
+
+        // Keyboard shortcuts help
+        function showKeyboardHelp() {
+            const helpText = `
+Keyboard Shortcuts:
+
+A or Enter - Approve current keyword
+{% if batch_context %}
+N - Next keyword
+P - Previous keyword
+B - Back to batch
+{% endif %}
+? - Show this help
+            `.trim();
+            alert(helpText);
+        }
     </script>
 </body>
+
 </html>

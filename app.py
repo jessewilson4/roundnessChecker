@@ -36,6 +36,7 @@ notes: perf=cold=3-5s|hot=<1s, persist=durable, concur=not_thread_safe, volatile
 
 from flask import Flask, render_template, request, jsonify, send_file, Response
 import os
+import re
 import numpy as np
 from datetime import datetime
 import threading
@@ -144,10 +145,10 @@ def init_searchers():
         google_searcher = GoogleSearcher(GOOGLE_API_KEY, GOOGLE_CSE_ID)
 
 
-def search_all_sources(search_term: str, num_images: int = 30, start_offset: int = 0):
+def search_all_sources(search_term: str, num_images: int = 30, start_offset: int = 0, use_config_modifiers: bool = True):
     """Search Google for images"""
     init_searchers()
-    return google_searcher.search_images(search_term, num_images, start_offset)
+    return google_searcher.search_images(search_term, num_images, start_offset, use_config_modifiers)
 
 
 def download_images_parallel(image_results):
@@ -522,7 +523,9 @@ def search():
 def history():
     """Search history page"""
     history_data = database.get_search_history(limit=50)
-    batches = database.get_all_batches()
+    all_batches = database.get_all_batches()
+    # Filter out empty batches
+    batches = [b for b in all_batches if b['total_keywords'] > 0]
     
     # Add roundness scores
     for search in history_data:
@@ -535,7 +538,7 @@ def history():
 @app.route('/load/<int:search_id>')
 def load_search(search_id):
     """Load previously cached search"""
-    search_data = database.load_search_by_id(search_id)
+    search_data = database.get_search(search_id)
     
     if not search_data:
         return render_template('index.html', error="Search not found")
@@ -579,6 +582,75 @@ def load_search(search_id):
                          search_id=search_id,
                          timestamp=search_data.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
                          num_images=len(results))
+    
+    # Check if this search is part of a batch and add navigation context
+    batch_context = None
+    conn = sqlite3.connect(database.db_path)
+    cursor = conn.cursor()
+    
+    # Get batch_id from the search
+    cursor.execute('SELECT batch_id FROM searches WHERE id = ?', (search_id,))
+    row = cursor.fetchone()
+    
+    if row and row[0]:
+        batch_id = row[0]
+        batch = database.get_batch(batch_id)
+        
+        if batch:
+            keywords = batch['keywords']
+            search_term = search_data['search_term']
+            
+            try:
+                current_index = keywords.index(search_term)
+                
+                # Get prev and next search IDs
+                prev_search_id = None
+                next_search_id = None
+                
+                if current_index > 0:
+                    prev_keyword = keywords[current_index - 1]
+                    cursor.execute('SELECT id FROM searches WHERE search_term = ? AND batch_id = ? ORDER BY id DESC LIMIT 1', 
+                                 (prev_keyword, batch_id))
+                    prev_row = cursor.fetchone()
+                    if prev_row:
+                        prev_search_id = prev_row[0]
+                
+                if current_index < len(keywords) - 1:
+                    next_keyword = keywords[current_index + 1]
+                    cursor.execute('SELECT id FROM searches WHERE search_term = ? AND batch_id = ? ORDER BY id DESC LIMIT 1', 
+                                 (next_keyword, batch_id))
+                    next_row = cursor.fetchone()
+                    if next_row:
+                        next_search_id = next_row[0]
+                
+                batch_context = {
+                    'batch_id': batch_id,
+                    'batch_name': batch['name'],
+                    'current_position': current_index + 1,
+                    'total_keywords': len(keywords),
+                    'prev_search_id': prev_search_id,
+                    'next_search_id': next_search_id
+                }
+            except ValueError:
+                # Keyword not found in batch (shouldn't happen)
+                pass
+    
+    conn.close()
+    
+    return render_template('results.html',
+                         search_term=search_data['search_term'],
+                         results=results[:10],
+                         all_results=results,
+                         outliers=outliers,
+                         stats=stats,
+                         chart_data=chart_data,
+                         average_roundness_score=avg_score,
+                         average_score_description=avg_description,
+                         average_score_color=avg_color,
+                         search_id=search_id,
+                         timestamp=search_data.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+                         num_images=len(results),
+                         batch_context=batch_context)
 
 
 @app.route('/autocomplete')
@@ -731,13 +803,15 @@ def delete_searches():
 @app.route('/batch')
 def batch_processing():
     """Render batch processing page"""
-    incomplete_batches = database.get_incomplete_batches()
+    all_incomplete = database.get_incomplete_batches()
+    # Filter out empty batches
+    incomplete_batches = [b for b in all_incomplete if b['total_keywords'] > 0]
     return render_template('batch.html', incomplete_batches=incomplete_batches)
 
 
 @app.route('/batch/upload', methods=['POST'])
 def batch_upload():
-    """Upload and parse CSV/Excel file"""
+    """Upload and parse CSV/Excel file with fixed format validation"""
     try:
         if 'file' not in request.files:
             return jsonify({'success': False, 'error': 'No file uploaded'})
@@ -754,25 +828,45 @@ def batch_upload():
         else:
             return jsonify({'success': False, 'error': 'Invalid file type. Use CSV or Excel.'})
         
-        columns = df.columns.tolist()
+        # Validate required headers for v2 format
+        required_headers = {'Keyword', 'Phrase', 'Category', 'Search Value'}
+        actual_headers = set(df.columns)
+        
+        if not required_headers.issubset(actual_headers):
+            missing = required_headers - actual_headers
+            return jsonify({
+                'success': False,
+                'error': f'Missing required columns: {", ".join(missing)}. Expected: Keyword, Phrase, Category, Search Value'
+            })
+        
+        # Stop at first empty row (where Keyword is empty/NaN)
+        if df['Keyword'].isna().any():
+            first_empty_idx = df[df['Keyword'].isna()].index[0]
+            df = df.iloc[:first_empty_idx]
+            print(f"Stopped at first empty row (index {first_empty_idx})")
+        
+        # Extract unique categories for display
+        categories = df['Category'].dropna().unique().tolist()
         
         return jsonify({
             'success': True,
-            'columns': columns,
+            'format': 'v2',
             'row_count': len(df),
+            'categories': categories,
             'preview': df.head(5).to_dict('records')
         })
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
 
 
 @app.route('/batch/create', methods=['POST'])
 def batch_create():
-    """Create batch"""
+    """Create batch from v2 format CSV"""
     try:
-        batch_name = request.form.get('batch_name')
-        column_name = request.form.get('column_name')
+        batch_name = request.form.get('batch_name', '').strip()
         images_per_keyword = int(request.form.get('images_per_keyword', 30))
         
         if 'file' not in request.files:
@@ -790,24 +884,69 @@ def batch_create():
         else:
             return jsonify({'success': False, 'error': 'Invalid file type'})
         
-        if column_name not in df.columns:
-            return jsonify({'success': False, 'error': f'Column "{column_name}" not found'})
+        # Validate required headers
+        required_headers = {'Keyword', 'Phrase', 'Category', 'Search Value'}
+        if not required_headers.issubset(set(df.columns)):
+            return jsonify({'success': False, 'error': 'Missing required columns'})
         
-        keywords = df[column_name].dropna().astype(str).tolist()
+        # Stop at first empty row
+        if df['Keyword'].isna().any():
+            first_empty_idx = df[df['Keyword'].isna()].index[0]
+            df = df.iloc[:first_empty_idx]
         
-        if not keywords:
-            return jsonify({'success': False, 'error': 'No keywords found'})
+        # Build keywords data structure (v2 format)
+        keywords_data = []
+        for _, row in df.iterrows():
+            keyword = str(row['Keyword']).strip()
+            phrase = str(row['Phrase']).strip()
+            category = str(row['Category']).strip()
+            search_value = str(row['Search Value']).strip() if pd.notna(row['Search Value']) else ''
+            
+            # Clean up search_value: collapse multiple quotes to single quotes
+            # Handles """word""" -> "word", ""word"" -> "word", etc.
+            # This ensures literal search phrases are correctly formatted for Google
+            if search_value:
+                search_value = re.sub(r'"{2,}', '"', search_value)
+            
+            # Fallback to keyword if search_value is empty
+            if not search_value:
+                search_value = keyword
+            
+            keywords_data.append({
+                'keyword': keyword,
+                'phrase': phrase,
+                'category': category,
+                'search_value': search_value
+            })
         
-        batch_id = database.create_batch(batch_name, keywords, images_per_keyword)
+        if not keywords_data:
+            return jsonify({'success': False, 'error': 'No valid keywords found'})
+        
+        # Use category as batch name if not provided
+        category = keywords_data[0]['category']
+        if not batch_name:
+            batch_name = category
+        
+        # Create batch with v2 format
+        batch_id = database.create_batch(
+            name=batch_name,
+            keywords=keywords_data,
+            images_per_keyword=images_per_keyword,
+            category=category,
+            format_version='v2'
+        )
         
         return jsonify({
             'success': True,
             'batch_id': batch_id,
-            'total_keywords': len(set(keywords)),
-            'message': f'Batch created with {len(set(keywords))} unique keywords'
+            'total_keywords': len(keywords_data),
+            'category': category,
+            'message': f'Batch created with {len(keywords_data)} keywords'
         })
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
 
 
@@ -842,7 +981,7 @@ def batch_start(batch_id):
             
             database.update_batch_status(batch_id, 'processing', 0, 0)
             
-            for idx, keyword in enumerate(keywords):
+            for idx, keyword_data in enumerate(keywords):
                 if processor['is_stopped']:
                     database.update_batch_status(batch_id, 'stopped', idx, completed)
                     break
@@ -856,105 +995,149 @@ def batch_start(batch_id):
                 if processor['is_stopped']:
                     break
                 
+                # Handle both v1 (string) and v2 (dict) formats
+                if isinstance(keyword_data, dict):
+                    # V2 format with metadata
+                    keyword = keyword_data['keyword']
+                    search_value = keyword_data['search_value']
+                    category = keyword_data.get('category', '')
+                    use_config_modifiers = False  # V2 batches don't use config modifiers
+                else:
+                    # V1 format (simple string)
+                    keyword = keyword_data
+                    search_value = keyword
+                    category = None
+                    use_config_modifiers = True  # V1 batches use config modifiers
+                
                 print(f"\n{'='*80}")
                 print(f"BATCH [{idx+1}/{len(keywords)}]: {keyword}")
+                if search_value != keyword:
+                    print(f"  Search Query: {search_value[:100]}..." if len(search_value) > 100 else f"  Search Query: {search_value}")
                 print(f"{'='*80}")
                 
                 try:
-                    # Search
-                    image_results = search_all_sources(keyword, images_per)
-                    
-                    if not image_results:
-                        print(f"  ✗ No images found for '{keyword}'")
-                        database.update_batch_status(batch_id, 'processing', idx + 1, completed)
-                        continue
-                    
-                    # Download
-                    downloads = download_images_parallel(image_results)
-                    
-                    if not downloads:
-                        print(f"  ✗ Failed to download images for '{keyword}'")
-                        database.update_batch_status(batch_id, 'processing', idx + 1, completed)
-                        continue
-                    
-                    # Process in batches with full result construction
-                    print(f"  🔬 Analyzing {len(downloads)} images...")
+                    # Retry loop with pagination (similar to standard search)
                     results = []
+                    seen_urls = set()
+                    pagination_offset = 0
+                    max_fetch_attempts = 5
+                    total_downloaded = 0
+                    max_images_to_download = images_per * 3  # Cap at 3x requested
                     
-                    for batch_start in range(0, len(downloads), BATCH_SIZE):
-                        batch_end = min(batch_start + BATCH_SIZE, len(downloads))
-                        batch = downloads[batch_start:batch_end]
+                    while len(results) < images_per and total_downloaded < max_images_to_download and pagination_offset < max_fetch_attempts * 10:
+                        if processor['is_stopped']:
+                            break
                         
-                        # Extract data
-                        batch_img_data = [item[0] for item in batch]
-                        batch_img_bytes = [item[1] for item in batch]
+                        still_needed = images_per - len(results)
+                        print(f"  📥 Need {still_needed} more valid results. Fetching batch (offset={pagination_offset})...")
                         
-                        # Batch analyze
-                        analyses = analyze_images_batch(batch_img_bytes, keyword, analyzer)
+                        # Search using search_value with appropriate modifier setting
+                        image_results = search_all_sources(search_value, num_images=10, start_offset=pagination_offset, use_config_modifiers=use_config_modifiers)
                         
-                        # Process results
-                        for img_data, image_bytes, analysis in zip(batch_img_data, batch_img_bytes, analyses):
-                            if not analysis:
-                                continue
+                        if not image_results:
+                            print(f"  ⚠️  No more results from API for '{keyword}'")
+                            break
+                        
+                        # Filter already-tried URLs
+                        new_results = [r for r in image_results if r['url'] not in seen_urls]
+                        seen_urls.update(r['url'] for r in image_results)
+                        
+                        if not new_results:
+                            print("  ⚠️  All results already tried")
+                            pagination_offset += 10
+                            continue
+                        
+                        # Download
+                        downloads = download_images_parallel(new_results)
+                        total_downloaded += len(downloads)
+                        
+                        if not downloads:
+                            print(f"  ⚠️  No successful downloads for '{keyword}' (offset {pagination_offset})")
+                            pagination_offset += 10
+                            continue
+                        
+                        # Process in batches with full result construction
+                        print(f"  🔬 Analyzing {len(downloads)} images...")
+                        
+                        for batch_start in range(0, len(downloads), BATCH_SIZE):
+                            batch_end = min(batch_start + BATCH_SIZE, len(downloads))
+                            batch = downloads[batch_start:batch_end]
                             
-                            # Save thumbnail
-                            thumbnail = compress_thumbnail(image_bytes, max_size_kb=25)
-                            safe_keyword = sanitize_filename(keyword)
-                            thumbnail_filename = f"{safe_keyword}_{img_data['image_id']}_thumb.jpg"
-                            thumbnail_path = os.path.join(app.config['IMAGES_DIR'], thumbnail_filename)
+                            # Extract data
+                            batch_img_data = [item[0] for item in batch]
+                            batch_img_bytes = [item[1] for item in batch]
                             
-                            with open(thumbnail_path, 'wb') as f:
-                                f.write(thumbnail)
+                            # Batch analyze
+                            batch_ids = [item['image_id'] for item in batch_img_data]
+                            analyses = analyze_images_batch(batch_img_bytes, keyword, analyzer, image_ids=batch_ids)
                             
-                            # Save visualization images
-                            viz_paths = {}
-                            for viz_type, viz_bytes in analysis['visualizations'].items():
-                                viz_filename = f"{safe_keyword}_{img_data['image_id']}_{viz_type}.jpg"
-                                viz_path = os.path.join(app.config['IMAGES_DIR'], viz_filename)
-                                with open(viz_path, 'wb') as f:
-                                    f.write(viz_bytes)
-                                viz_paths[viz_type] = viz_filename
+                            # Process results
+                            for img_data, image_bytes, analysis in zip(batch_img_data, batch_img_bytes, analyses):
+                                if not analysis:
+                                    continue
+                                
+                                # Save thumbnail
+                                thumbnail = compress_thumbnail(image_bytes, max_size_kb=25)
+                                safe_keyword = sanitize_filename(keyword)
+                                thumbnail_filename = f"{safe_keyword}_{img_data['image_id']}_thumb.jpg"
+                                thumbnail_path = os.path.join(app.config['IMAGES_DIR'], thumbnail_filename)
+                                
+                                with open(thumbnail_path, 'wb') as f:
+                                    f.write(thumbnail)
+                                
+                                # Save visualization images
+                                viz_paths = {}
+                                for viz_type, viz_bytes in analysis['visualizations'].items():
+                                    viz_filename = f"{safe_keyword}_{img_data['image_id']}_{viz_type}.jpg"
+                                    viz_path = os.path.join(app.config['IMAGES_DIR'], viz_filename)
+                                    with open(viz_path, 'wb') as f:
+                                        f.write(viz_bytes)
+                                    viz_paths[viz_type] = viz_filename
+                                
+                                # Calculate scores
+                                composite_pct = analysis['composite'] * 100
+                                roundness_score = get_roundness_score(composite_pct)
+                                score_desc, score_color = get_score_description(roundness_score)
+                                
+                                # Build complete result object
+                                results.append({
+                                    'image_id': img_data['image_id'],
+                                    'pexels_id': img_data['image_id'],
+                                    'url': img_data['url'],
+                                    'title': img_data.get('title', ''),
+                                    'photographer': img_data.get('title', 'Google'),
+                                    'photographer_url': img_data.get('url'),
+                                    'source': 'google',
+                                    'thumbnail_path': thumbnail_filename,
+                                    'viz_paths': viz_paths,
+                                    'circularity': analysis['circularity'],
+                                    'aspect_ratio': analysis['aspect_ratio'],
+                                    'eccentricity': analysis['eccentricity'],
+                                    'solidity': analysis['solidity'],
+                                    'convexity': analysis['convexity'],
+                                    'composite': analysis['composite'],
+                                    'roundness_score': roundness_score,
+                                    'score_description': score_desc,
+                                    'score_color': score_color,
+                                    'area': analysis['area'],
+                                    'perimeter': analysis.get('perimeter', 0)
+                                })
+                                
+                                if len(results) >= images_per:
+                                    break
                             
-                            # Calculate scores
-                            composite_pct = analysis['composite'] * 100
-                            roundness_score = get_roundness_score(composite_pct)
-                            score_desc, score_color = get_score_description(roundness_score)
-                            
-                            # Build complete result object
-                            results.append({
-                                'image_id': img_data['image_id'],
-                                'pexels_id': img_data['image_id'],
-                                'url': img_data['url'],
-                                'title': img_data.get('title', ''),
-                                'photographer': img_data.get('title', 'Google'),
-                                'photographer_url': img_data.get('url'),
-                                'source': 'google',
-                                'thumbnail_path': thumbnail_filename,
-                                'viz_paths': viz_paths,
-                                'circularity': analysis['circularity'],
-                                'aspect_ratio': analysis['aspect_ratio'],
-                                'eccentricity': analysis['eccentricity'],
-                                'solidity': analysis['solidity'],
-                                'convexity': analysis['convexity'],
-                                'composite': analysis['composite'],
-                                'roundness_score': roundness_score,
-                                'score_description': score_desc,
-                                'score_color': score_color,
-                                'area': analysis['area'],
-                                'perimeter': analysis.get('perimeter', 0)
-                            })
+                            # Cleanup after batch
+                            cleanup_memory()
                             
                             if len(results) >= images_per:
                                 break
                         
-                        # Cleanup after batch
-                        cleanup_memory()
-                        
-                        if len(results) >= images_per:
-                            break
+                        # Move to next page if we still need images
+                        if len(results) < images_per:
+                            pagination_offset += 10
                     
                     if not results:
-                        print(f"  ✗ No valid detections for '{keyword}'")
+                        print(f"  ✗ No valid detections for '{keyword}' after trying {total_downloaded} images")
                         database.update_batch_status(batch_id, 'processing', idx + 1, completed)
                         continue
                     
@@ -964,7 +1147,10 @@ def batch_start(batch_id):
                         result['rank'] = i
                     
                     # Filter outliers and clean for database
-                    filtered, outliers_list = remove_outliers(results, metric='composite')
+                    # PHASE 1.3: NO automatic outlier filtering - keep everything
+                    # filtered, outliers_list = remove_outliers(results, metric='composite')
+                    filtered = results
+                    outliers_list = []
                     
                     # Clean results for database (convert numpy types)
                     clean_filtered = []
@@ -1021,13 +1207,17 @@ def batch_start(batch_id):
                     if clean_filtered:
                         stats = calculate_statistics(clean_filtered, clean_outliers)
                         
+                        # Save with dual-keyword fields for v2 format
                         database.save_search(
                             search_term=keyword,
                             results=results,
                             filtered_results=clean_filtered,
                             outliers=clean_outliers,
                             stats=stats,
-                            batch_id=batch_id
+                            batch_id=batch_id,
+                            detection_keyword=keyword,  # Simple keyword for OWL-ViT
+                            search_phrase=search_value,  # Complex query for Google
+                            category=category if isinstance(keyword_data, dict) else None
                         )
                         
                         print(f"  ✓ Saved {len(clean_filtered)} results")
@@ -1079,12 +1269,21 @@ def batch_status(batch_id):
         keyword_statuses = []
         keywords = batch['keywords']
         
-        for idx, keyword in enumerate(keywords):
+        for idx, keyword_data in enumerate(keywords):
+            # Handle both v1 (string) and v2 (dict) formats
+            if isinstance(keyword_data, dict):
+                keyword = keyword_data['keyword']
+            else:
+                keyword = keyword_data
+            
             search = next((s for s in searches if s['search_term'] == keyword), None)
             
             if idx < batch['current_keyword_index']:
                 if search:
-                    status = 'complete' if search['num_images'] >= batch['images_per_keyword'] else 'incomplete'
+                    # Check actual status from DB
+                    kw_status = database.get_keyword_status(keyword)
+                    status = kw_status['status'] if kw_status else ('complete' if search['num_images'] >= batch['images_per_keyword'] else 'incomplete')
+                    
                     keyword_statuses.append({
                         'keyword': keyword,
                         'status': status,
@@ -1093,6 +1292,7 @@ def batch_status(batch_id):
                         'search_id': search['id']
                     })
                 else:
+                    # No search found - failed to process
                     keyword_statuses.append({
                         'keyword': keyword,
                         'status': 'failed',
@@ -1230,6 +1430,66 @@ def batch_export(batch_id):
         mimetype='text/csv',
         headers={'Content-Disposition': f'attachment; filename=batch_{safe_name}.csv'}
     )
+
+
+
+@app.route('/api/keyword/<keyword>/approve', methods=['POST'])
+def api_approve_keyword(keyword):
+    """Approve a keyword"""
+    try:
+        database.approve_keyword(keyword)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/image/<image_id>/reject', methods=['POST'])
+def api_reject_image(image_id):
+    """Reject an image"""
+    try:
+        data = request.get_json() or {}
+        reason = data.get('reason', 'user_rejected')
+        search_id = data.get('search_id')
+        
+        if not search_id:
+            # Try to find search_id from image_id if not provided
+            # This requires a DB lookup not currently in Database class, 
+            # so we rely on frontend passing search_id for now
+            return jsonify({'success': False, 'error': 'search_id required'})
+            
+        database.reject_image(int(search_id), image_id, reason)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+
+
+@app.route('/api/keywords/bulk-approve', methods=['POST'])
+def api_bulk_approve_keywords():
+    """Approve multiple keywords at once"""
+    try:
+        data = request.get_json() or {}
+        keywords = data.get('keywords', [])
+        
+        if not keywords:
+            return jsonify({'success': False, 'error': 'No keywords provided'})
+        
+        approved_count = 0
+        for keyword in keywords:
+            try:
+                database.approve_keyword(keyword)
+                approved_count += 1
+            except Exception as e:
+                print(f"Error approving keyword '{keyword}': {e}")
+        
+        return jsonify({
+            'success': True,
+            'approved_count': approved_count,
+            'total': len(keywords)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 
 # ============= ADMIN SETTINGS =============

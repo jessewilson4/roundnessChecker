@@ -1,19 +1,18 @@
 """
 # === UAIPCS START ===
-file: utils/edge_detection.py
-purpose: Object detection + segmentation + roundness analysis with detailed logging
-deps: [@transformers:library, @segment_anything:library, @torch:library, @opencv:library, @numpy:library, @PIL:library]
-funcs:
-  - analyze_image_roundness(image_data:bytes, search_term:str, analyzer:obj, image_id:str) -> dict  # side_effect: logs detection details
-  - analyze_images_batch(images_data:list, search_term:str, analyzer:obj, image_ids:list) -> list  # side_effect: batch processing with logging
-  - create_visualizations(original:array, detection:dict, mask:array, analysis:dict) -> dict  # no_side_effect
-  - compress_thumbnail(image_data:bytes, max_size_kb:int) -> bytes  # no_side_effect
-  - remove_outliers(results:list, metric:str) -> tuple  # no_side_effect
-classes:
-  - RoundnessAnalyzer  # manages OWL-ViT and SAM models with batch detection
-refs:
-  - utils/config.py::get_setting
-notes: resolution=1024px, detection_filters=[confidence,closeup], logging=per_image_detailed
+# file: utils/edge_detection.py
+# purpose: Object detection + segmentation + roundness analysis with detailed logging
+# deps: [@transformers:library, @segment_anything:library, @torch:library, @opencv:library, @numpy:library, @PIL:library, @config:module/local]
+# funcs:
+#   - analyze_image_roundness(image_data:bytes, search_term:str, analyzer:RoundnessAnalyzer, image_id:str=None) -> dict  # no_side_effect
+#   - analyze_images_batch(images_data:list, search_term:str, analyzer:RoundnessAnalyzer, image_ids:list=None) -> list  # no_side_effect
+#   - create_visualizations(image:ndarray, detection:dict, mask:ndarray, result:dict) -> dict  # no_side_effect
+#   - compress_thumbnail(image_bytes:bytes, max_size_kb:int) -> bytes  # no_side_effect
+# classes:
+#   - RoundnessAnalyzer  # Main analysis class wrapping OWL-ViT and SAM
+# refs:
+#   - utils/config.py::get_setting
+# notes: resolution=1024px|detection_filters=[confidence,closeup]|logging=per_image_detailed
 # === UAIPCS END ===
 """
 
@@ -196,12 +195,18 @@ class RoundnessAnalyzer:
         self.processor = OwlViTProcessor.from_pretrained(owl_path)
         self.model = OwlViTForObjectDetection.from_pretrained(owl_path)
         
+        # SAM model
         print("   Loading SAM...")
-        if sam_path and Path(sam_path).exists():
-            sam = sam_model_registry["vit_h"](checkpoint=sam_path)
-        else:
-            from segment_anything import sam_model_registry
-            sam = sam_model_registry["vit_h"](checkpoint=None)
+        sam_checkpoint = "models/sam_vit_b_01ec64.pth" if use_local_models else "sam_vit_b_01ec64.pth"
+        
+        if not Path(sam_checkpoint).exists():
+            print(f"   Downloading SAM checkpoint (375MB)...")
+            import urllib.request
+            Path(sam_checkpoint).parent.mkdir(exist_ok=True)
+            url = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
+            urllib.request.urlretrieve(url, sam_checkpoint)
+        
+        sam = sam_model_registry["vit_b"](checkpoint=sam_checkpoint)
             
         if torch.cuda.is_available():
             sam = sam.cuda()
@@ -301,50 +306,26 @@ class RoundnessAnalyzer:
         best_idx = np.argmax(scores)
         mask = masks[best_idx]
         
-        # Additional check: mask should be mostly within the bbox
-        mask_area = np.sum(mask)
-        bbox_area = (x2 - x1) * (y2 - y1)
-        
-        # If mask is way larger than bbox, something went wrong
-        if mask_area > bbox_area * 3:
-            # Fall back to just the bbox region
-            full_mask = np.zeros(image.shape[:2], dtype=np.uint8)
-            full_mask[y1:y2, x1:x2] = 255
-            return full_mask
-        
         return mask.astype(np.uint8) * 255
     
     def analyze_roundness(self, image: np.ndarray, mask: np.ndarray) -> Optional[Dict]:
         """
         Analyze roundness metrics from segmentation mask using Canny edge detection.
         """
-        # Smooth mask with small elliptical kernel
-        kernel_smooth = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        # Smooth mask with larger elliptical kernel to remove watermarks/noise
+        # Increased from 3x3 to 7x7 to better filter out attached text/logos
+        kernel_smooth = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
         mask_smooth = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_smooth)
         mask_smooth = cv2.morphologyEx(mask_smooth, cv2.MORPH_CLOSE, kernel_smooth)
         
-        # Convert to grayscale
-        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        # Get edges directly from the mask (silhouette) to avoid internal lines
+        # We use Canny on the binary mask to get a clean boundary line for visualization
+        edges_raw = cv2.Canny(mask_smooth, 100, 200)
+        edges_closed = edges_raw.copy() # No need to close if we use the mask
         
-        # Apply mask to grayscale - only analyze edges WITHIN the masked region
-        masked_gray = gray * (mask_smooth > 0).astype(np.uint8)
-        
-        # Blur for better edge detection
-        blurred = cv2.GaussianBlur(masked_gray, (5, 5), 0)
-        
-        # Auto Canny edge detection
-        v = np.median(blurred[blurred > 0]) if np.any(blurred > 0) else 128
-        sigma = 0.33
-        lower = int(max(0, (1.0 - sigma) * v))
-        upper = int(min(255, (1.0 + sigma) * v))
-        edges_raw = cv2.Canny(blurred, lower, upper)
-        
-        # Morphological closing with large elliptical kernel to connect edges
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-        edges_closed = cv2.morphologyEx(edges_raw, cv2.MORPH_CLOSE, kernel)
-        
-        # Find contours from the edges
-        contours, _ = cv2.findContours(edges_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Find contours from the MASK, not the edges of the texture
+        # RETR_EXTERNAL ensures we only get the outer boundary
+        contours, _ = cv2.findContours(mask_smooth, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         if not contours:
             return None
@@ -355,10 +336,19 @@ class RoundnessAnalyzer:
         
         if area < 100:
             return None
+            
+        # Create a clean mask with ONLY the main contour
+        # This prevents multiple objects from being grouped together or analyzed
+        clean_mask = np.zeros_like(mask)
+        cv2.drawContours(clean_mask, [main_contour], -1, (255), thickness=cv2.FILLED)
+        
+        # Update the mask to be the clean one
+        mask = clean_mask
         
         # Smooth contour
         perimeter_raw = cv2.arcLength(main_contour, True)
-        epsilon = 0.002 * perimeter_raw
+        # Reduced epsilon to 0.0005 (0.05%) to keep curves smoother and less faceted
+        epsilon = 0.0005 * perimeter_raw
         contour_smooth = cv2.approxPolyDP(main_contour, epsilon, True)
         
         # Calculate metrics
@@ -458,13 +448,20 @@ def analyze_image_roundness(
         closeup_threshold = get_setting('detection.closeup_threshold', 0.90)
         
         # Detect object
+        if image_id:
+            print(f"  🔍 Analyzing image {image_id}...")
+            
         detection = analyzer.detect_object(img_pil, search_term, threshold=confidence_threshold)
         
         if detection is None:
+            if image_id:
+                print(f"  ✗ No object detected in {image_id}")
             return None
         
         # Check confidence
         if detection['confidence'] < confidence_threshold:
+            if image_id:
+                print(f"  ✗ Low confidence ({detection['confidence']:.2f}) in {image_id}")
             return None
         
         # Check if closeup (bbox covers too much of image)
@@ -472,6 +469,8 @@ def analyze_image_roundness(
         bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
         img_area = img_array.shape[0] * img_array.shape[1]
         if bbox_area / img_area > closeup_threshold:
+            if image_id:
+                print(f"  ✗ Closeup detected (coverage {bbox_area/img_area:.2f}) in {image_id}")
             return None
         
         # Segment object

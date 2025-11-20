@@ -1,5 +1,29 @@
 #!/usr/bin/env python3
 """
+# === UAIPCS START ===
+# file: export_report.py
+# purpose: Standalone HTML Report Exporter - Exports roundness analysis data to a self-contained single-page HTML application
+# deps: [@sqlite3:library, @json:library, @os:library, @shutil:library, @datetime:library, @typing:library]
+# funcs:
+#   - HTMLExporter.__init__(db_path:str, images_dir:str) -> None  # side_effect: validates paths
+#   - HTMLExporter.get_all_individual_searches() -> list  # no_side_effect
+#   - HTMLExporter.get_all_batches() -> list  # no_side_effect
+#   - HTMLExporter.get_batch_searches(batch_id:int) -> list  # no_side_effect
+#   - HTMLExporter.get_roundness_score(composite_percentage:float) -> int  # no_side_effect
+#   - HTMLExporter.copy_images(searches:list, export_images_dir:str) -> None  # side_effect: file system copy
+#   - HTMLExporter.generate_data_json(searches:list) -> str  # no_side_effect
+#   - HTMLExporter.generate_html(data_json:str) -> str  # no_side_effect
+#   - HTMLExporter.export(searches:list, export_name:str) -> str  # side_effect: creates directories and files
+# classes:
+#   - HTMLExporter  # Handles data extraction and HTML generation
+# refs:
+#   - cache/searches.db
+#   - cache/images/
+# notes: output=single_html_file, embedded_data=json_in_script_tag, styling=internal_css
+# === UAIPCS END ===
+"""
+
+"""
 Standalone HTML Report Exporter
 Exports roundness analysis data to a self-contained single-page HTML application
 """
